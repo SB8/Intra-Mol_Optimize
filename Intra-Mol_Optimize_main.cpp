@@ -36,10 +36,10 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, bool genFileNa
 	{
 		cons.phi1min = 0.0;
 		cons.phi1max = 180.0;
-		cons.phi1step = 10.0;
+		cons.phi1step = 5.0;
 		cons.phi2min = 0.0;
 		cons.phi2max = 360.0;
-		cons.phi2step = 10.0;
+		cons.phi2step = 5.0;
 		
 		if (genFileNames) {
 			int numPhi1 = round( (cons.phi1max-cons.phi1min)/cons.phi1step + 1);
@@ -231,6 +231,12 @@ int main(int argc, char *argv[])
 	vector<double> initialParams(cons.numTotalParams);
 	vector<double> currentParams(cons.numTotalParams);
 	
+	// Set adaptive Nelder-Mead parameters
+	cons.nmReflect = 1.0;
+	cons.nmExpand = 1.0 + 2.0/double(cons.numTotalParams);
+	cons.nmContract = 0.75 - 0.5/double(cons.numTotalParams);
+	cons.nmShrink = 1.0 - 1.0/double(cons.numTotalParams);	
+	
 	cons.simplexSize = cons.numTotalParams + 1;
 	vecs.cosPsiData.resize(cons.numConfigs*cons.numDihedralFit);
 	
@@ -273,11 +279,6 @@ int main(int argc, char *argv[])
 	
 	simulated_annealing(cons, vecs, initialParams, currentParams, annealIt);
 	
-	// Set adaptive Nelder-Mead parameters
-	cons.nmReflect = 1.0;
-	cons.nmExpand = 1.0 + 2.0/double(cons.numTotalParams);
-	cons.nmContract = 0.75 - 0.5/double(cons.numTotalParams);
-	cons.nmShrink = 1.0 - 1.0/double(cons.numTotalParams);	
 	downhill_simplex(cons, vecs, initialParams, currentParams, simplexIt);
 	
 	//steepest_descent(cons, vecs, initialParams, currentParams, downhillIt);
@@ -387,7 +388,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 {
 	cout << "\nPerforming " << simplexIt << " downhill simplex iteraitons\n\n";
 	
-	int printFreq = 1; // Print simplex to console every printFreq steps
+	int printFreq = 100; // Print simplex to console every printFreq steps
 	
 	// Generate initial simplex	
 	vector<double> simplex(cons.simplexSize*(cons.numTotalParams));
@@ -528,14 +529,14 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 			
 			}
 		}
-		// Else, the reflected point error must be >= the second worst point
+		// Else, the reflected point error must be > the second worst point
 		else
 		{
 			if (toPrint)
 				cout << "Reflection unsuccessful, performing contraction.\n";
 			
 			//Replace worst point by reflected point if it's an improvement
-			if (reflectError <= maxError)
+			if (reflectError < maxError)
 			{
 				for (int col=0; col<cons.numTotalParams; col++)
 				{
@@ -552,7 +553,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 			// Test contracted point
 			long double contractError = error_from_trial_point(cons, initialParams, contractParams, 0, vecs, 0);
 			
-			if (contractError <= maxError)
+			if (contractError < maxError)
 			{
 				if (toPrint)
 					cout << "Replacing worst point with contracted point.\n\n";
