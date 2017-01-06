@@ -21,12 +21,14 @@ using std::ofstream;
 
 int read_input_params(constant_struct &cons, vector_struct &vecs, bool genFileNames)
 {
+	cons.pi = acosl(-1.0L);
+	
 	cons.nrexcl = 3;
 	cons.gromacsCombRule = 2;
 	cons.scale14LJ = 0.0;
 	cons.scale14QQ = 0.5;
 	
-	cons.nRBfit = 6;
+	cons.nRBfit = 6; // Highest power term is cos^(nRBfit-1)
 	
 	cons.phiDim = 2;
 	
@@ -107,11 +109,11 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, bool genFileNa
 	cons.sigmaStep = 0.001;
 	cons.epsilonStep = 0.001;
 	
-	// Downhill simplex parameters
-	cons.simplexAlpha = 1.0;
-	cons.simplexGamma = 2.0;
-	cons.simplexBeta = 0.5;
-	cons.simplexSigma = 0.5;
+	// Nelder-Mead parameters
+	cons.nmReflect = 1.0;
+	cons.nmExpand = 2.0;
+	cons.nmContract = 0.8;
+	cons.nmShrink = 0.5;
 	
 	cons.sigmaGradFactor = 0.01;
 	
@@ -242,7 +244,7 @@ int main(int argc, char *argv[])
 	for (int d = 0; d < cons.size[3]; d++)
 	{
 		// Get dihedral type
-		int dType = vecs.dihedralData[d*cons.dihedralDataSize + 4];
+		int dType = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 4]));
 		
 		if (vecs.dihedralData[d*cons.dihedralDataSize + 4] != 0) // If being used in fit
 		{
@@ -271,6 +273,11 @@ int main(int argc, char *argv[])
 	
 	simulated_annealing(cons, vecs, initialParams, currentParams, annealIt);
 	
+	// Set adaptive Nelder-Mead parameters
+	cons.nmReflect = 1.0;
+	cons.nmExpand = 1.0 + 2.0/double(cons.numTotalParams);
+	cons.nmContract = 0.75 - 0.5/double(cons.numTotalParams);
+	cons.nmShrink = 1.0 - 1.0/double(cons.numTotalParams);	
 	downhill_simplex(cons, vecs, initialParams, currentParams, simplexIt);
 	
 	//steepest_descent(cons, vecs, initialParams, currentParams, downhillIt);
@@ -286,6 +293,7 @@ int main(int argc, char *argv[])
 
 int simulated_annealing(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int annealIt)
 {
+	int printFreq = 100; // Print simplex to console every printFreq steps
 	
 	srand(time(NULL));
 	double temperature = cons.vTempInitial;
@@ -293,7 +301,7 @@ int simulated_annealing(constant_struct cons, vector_struct vecs, vector<double>
 	ofstream annealStream;
 	annealStream.open("annealing_energy.txt");
 	annealStream.precision(12);
-	bool toWrite;
+	bool toPrint, toWrite;
 	
 	vector<double> oldParams(cons.numTotalParams);
 	vector<double> annealParams(cons.numTotalParams);
@@ -310,7 +318,11 @@ int simulated_annealing(constant_struct cons, vector_struct vecs, vector<double>
 	
 	for (int iT=0; iT < annealIt; iT++)
 	{
-		cout << "Simulated annealing iteration " << iT << ", temp " << temperature << "\n\n";
+		toPrint = (iT%printFreq == 0);
+		toWrite = (iT%cons.annealWrite == 0);
+		
+		if (toPrint)
+			cout << "Simulated annealing iteration " << iT << ", temp " << temperature << "\n\n";
 		
 		// Generate trial point
 		for (int p=0; p<cons.numDihedralParams; p++)
@@ -327,35 +339,36 @@ int simulated_annealing(constant_struct cons, vector_struct vecs, vector<double>
 				+ cons.epsilonStep*sqrt(temperature/cons.vTempInitial)*distribution(generator));	
 		}
 		
-		if (iT%cons.annealWrite == 0)
-			toWrite = 1;
-		else
-			toWrite = 0;
-		
 		// Test neighbour parameters
-		double oldError = error_from_trial_point(cons, initialParams, oldParams, 0, vecs, 0);
+		long double oldError = error_from_trial_point(cons, initialParams, oldParams, 0, vecs, 0);
 		annealStream << oldError << endl;
-		double trialError = error_from_trial_point(cons, initialParams, annealParams, 0, vecs, 0);
-		
-		cout << "Old error   = " << oldError << endl;
-		cout << "Trial error = " << trialError << endl;
+		long double trialError = error_from_trial_point(cons, initialParams, annealParams, 0, vecs, 0);
 		
 		// Compute acceptance probability
 		double aProb = exp((oldError-trialError)/temperature);
-		cout << "Acceptance probability = " << aProb << "\n\n";
 		
+		if (toPrint)
+		{
+			cout << "Old error   = " << oldError << endl;
+			cout << "Trial error = " << trialError << endl;
+			cout << "Acceptance probability = " << aProb << "\n\n";
+		}	
 		if (aProb > (rand()/double(RAND_MAX)))
 		{
-			cout << "Accepting these params: \n";
+			if (toPrint)
+				cout << "Accepting these params: \n";
 		
 			for (int col=0; col < (cons.numTotalParams); col++)
 			{
 				oldParams[col] = annealParams[col];
-				cout << std::setprecision(8) << std::setw(10) << oldParams[col] << " ";
+				
+				if (toPrint)
+					cout << std::setprecision(8) << std::setw(10) << oldParams[col] << " ";
 			}
-			cout << endl;
+			if (toPrint)
+				cout << endl;
 		}
-		else
+		else if (toPrint)
 		{
 			cout << "Rejecting these params! \n\n";
 		}
@@ -374,11 +387,11 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 {
 	cout << "\nPerforming " << simplexIt << " downhill simplex iteraitons\n\n";
 	
-	int printFreq = 10; // Print simplex to console every printFreq steps
+	int printFreq = 1; // Print simplex to console every printFreq steps
 	
 	// Generate initial simplex	
 	vector<double> simplex(cons.simplexSize*(cons.numTotalParams));
-	vector<double> simplexErrors(cons.simplexSize);
+	vector<long double> simplexErrors(cons.simplexSize);
 	vector<double> reflectParams(cons.numTotalParams);
 	vector<double> expansionParams(cons.numTotalParams);
 	vector<double> contractParams(cons.numTotalParams);
@@ -405,16 +418,8 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 	
 	for (int iD=0; iD < simplexIt; iD++)
 	{
-		
-		if (iD%cons.downhillWrite == 0)
-			toWrite = 1;
-		else
-			toWrite = 0;
-		
-		if (iD%printFreq == 0)
-			toPrint = 1;
-		else
-			toPrint = 0;
+		toWrite = (iD%cons.downhillWrite == 0);
+		toPrint = (iD%printFreq == 0);
 		
 		if (toPrint)
 			cout << "\nIteration: " << iD << endl << endl;
@@ -425,21 +430,21 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 		int worstRow = errorRankToRow[cons.simplexSize-1];
 		int maxPoint = worstRow*(cons.numTotalParams); // Start of row containing highest error point
 
-		double maxError = simplexErrors[ errorRankToRow[cons.simplexSize-1] ];
-		double secondMaxError = simplexErrors[ errorRankToRow[cons.simplexSize-2] ];
-		double minError = simplexErrors[ errorRankToRow[0] ];
+		long double maxError = simplexErrors[ errorRankToRow[cons.simplexSize-1] ];
+		long double secondMaxError = simplexErrors[ errorRankToRow[cons.simplexSize-2] ];
+		long double minError = simplexErrors[ errorRankToRow[0] ];
 		
 		simplexStream << minError << endl;
 		
-		// Write best
+		// Print best
 		if (toPrint)
-			cout << "MAX and MIN errors: " << maxError << " " << minError << endl;
+			cout << "MAX and MIN errors: " << std::setprecision(14) << std::setw(16) << maxError << " " << minError << endl;
 		
 		// Compute centroid of all points execpt worst
-		for (int col=0; col < (cons.numTotalParams); col++)
+		for (int col=0; col<cons.numTotalParams; col++)
 		{
 			double sumCentroidCol = 0.0;
-			for (int row=0; row < cons.simplexSize; row++)
+			for (int row=0; row<cons.simplexSize; row++)
 			{
 				// If this isn't worst row
 				if (row != errorRankToRow[cons.simplexSize-1])
@@ -452,17 +457,17 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 		
 		// Compute reflected point and output best params
 		if (toPrint)
-			cout << "\nComputing reflected point in opposite direction to point " << errorRankToRow[cons.numTotalParams] << endl;
+			cout << "\nComputing reflected point in opposite direction to point " << errorRankToRow[cons.simplexSize-1] << endl;
 		
-		for (int col=0; col < (cons.numTotalParams); col++) 
+		for (int col=0; col<cons.numTotalParams; col++) 
 		{
-			reflectParams[col] = centroid[col] + cons.simplexAlpha*(centroid[col] - simplex[maxPoint + col]);
+			reflectParams[col] = centroid[col] + cons.nmReflect*(centroid[col] - simplex[maxPoint + col]);
 		}
 		
-		double reflectError = error_from_trial_point(cons, initialParams, reflectParams, 0, vecs, 0);
+		long double reflectError = error_from_trial_point(cons, initialParams, reflectParams, 0, vecs, 0);
 		
 		if (toPrint)
-			cout << "\nTotal residual for reflected point is " << reflectError << endl << endl;
+			cout << "\nTotal residual for reflected point is " << std::setprecision(14) << std::setw(16) << reflectError << endl << endl;
 		
 		// If neither new best nor worst (or 2nd worst), replace worst row of simplex with trial point
 		if ((reflectError <= secondMaxError) && (reflectError >= minError))
@@ -473,7 +478,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 				cout << "Replacing worst point with reflected point.\n";	
 			}			
 			
-			for (int col=0; col < (cons.numTotalParams); col++)
+			for (int col=0; col<cons.numTotalParams; col++)
 			{
 				simplex[maxPoint + col] = reflectParams[col];
 			}
@@ -488,12 +493,12 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 				cout << "Generating new point by expansion.\n\n";
 			}
 			
-			for (int col=0; col < (cons.numTotalParams); col++)
+			for (int col=0; col<cons.numTotalParams; col++)
 			{
-				expansionParams[col] = reflectParams[col] + cons.simplexGamma*(reflectParams[col] - centroid[col]);
+				expansionParams[col] = reflectParams[col] + cons.nmExpand*(reflectParams[col] - centroid[col]);
 			}
 			// Test expanded point
-			double expansionError = error_from_trial_point(cons, initialParams, expansionParams, 0, vecs, 0);
+			long double expansionError = error_from_trial_point(cons, initialParams, expansionParams, 0, vecs, 0);
 			
 			if (expansionError < minError)
 			{
@@ -515,7 +520,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 					cout << "Expansion unsuccessful.\n";
 					cout << "Replacing worst point with reflected point.\n\n";
 				}
-				for (int col=0; col < (cons.numTotalParams); col++)
+				for (int col=0; col <cons.numTotalParams; col++)
 				{
 					simplex[maxPoint + col] = reflectParams[col];
 				}
@@ -523,16 +528,16 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 			
 			}
 		}
-		// Else, the reflected point must be worst than the second worst point
+		// Else, the reflected point error must be >= the second worst point
 		else
 		{
 			if (toPrint)
 				cout << "Reflection unsuccessful, performing contraction.\n";
 			
-			// Replace worst point by reflected point if it's an improvement
+			//Replace worst point by reflected point if it's an improvement
 			if (reflectError <= maxError)
 			{
-				for (int col=0; col < (cons.numTotalParams); col++)
+				for (int col=0; col<cons.numTotalParams; col++)
 				{
 					simplex[maxPoint + col] = reflectParams[col];
 				}
@@ -540,19 +545,19 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 				maxError = reflectError;
 			}
 			
-			for (int col=0; col < (cons.numTotalParams); col++)
+			for (int col=0; col<cons.numTotalParams; col++)
 			{
-				contractParams[col] = centroid[col] + cons.simplexBeta*(simplex[maxPoint+col] - centroid[col]);
+				contractParams[col] = centroid[col] + cons.nmContract*(simplex[maxPoint+col] - centroid[col]);
 			}
 			// Test contracted point
-			double contractError = error_from_trial_point(cons, initialParams, contractParams, 0, vecs, 0);
+			long double contractError = error_from_trial_point(cons, initialParams, contractParams, 0, vecs, 0);
 			
 			if (contractError <= maxError)
 			{
 				if (toPrint)
 					cout << "Replacing worst point with contracted point.\n\n";
 				
-				for (int col=0; col < (cons.numTotalParams); col++)
+				for (int col=0; col<cons.numTotalParams; col++)
 				{
 					simplex[maxPoint + col] = contractParams[col];
 				}	
@@ -569,7 +574,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 					{
 						double bestParam = simplex[errorRankToRow[0]*(cons.numTotalParams) + col];
 						double currentParam = simplex[row*(cons.numTotalParams) + col];
-						simplex[row*cons.numTotalParams + col] = bestParam + cons.simplexSigma*(currentParam-bestParam);
+						simplex[row*cons.numTotalParams + col] = bestParam + cons.nmShrink*(currentParam-bestParam);
 					}	
 					// Update error for reduced point
 					simplexErrors[row] = error_from_trial_point(cons, initialParams, simplex, (row*cons.numTotalParams), vecs, 0);
@@ -586,7 +591,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 			{
 				for (int col=0; col<(cons.numTotalParams); col++)
 				{
-					cout << std::setw(9) << simplex[row*(cons.numTotalParams) + col] << " ";
+					cout << std::setprecision(8) << std::setw(10) << simplex[row*(cons.numTotalParams) + col] << " ";
 				}
 				cout << endl;
 			}
@@ -617,8 +622,8 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 	
 	vector<double> tempParams(cons.numTotalParams);
 	
-	double currentF;
-	double previousF = error_from_trial_point(cons, initialParams, currentParams, 0, vecs, 0);
+	long double currentF;
+	long double previousF = error_from_trial_point(cons, initialParams, currentParams, 0, vecs, 0);
 	
 	ofstream cgStream;
 	cgStream.precision(12);
@@ -631,8 +636,8 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 	double currentBestAlpha = alpha;
 		
 	const int nMax = 30; // Maximum number of iterations in line search
-	double lineSearchF[nMax];
-	double currentBestF = previousF;
+	long double lineSearchF[nMax];
+	long double currentBestF = previousF;
 		
 	// Perform line search
 	for (int n=0; n<nMax; n++)
@@ -746,8 +751,8 @@ int steepest_descent(constant_struct cons, vector_struct vecs, vector<double> in
 {
 	vector<double> gradVector(cons.numTotalParams);
 	vector<double> tempParams(cons.numTotalParams);
-	double currentF;
-	double previousF = error_from_trial_point(cons, initialParams, currentParams, 0, vecs, 0);
+	long double currentF;
+	long double previousF = error_from_trial_point(cons, initialParams, currentParams, 0, vecs, 0);
 	
 	for (int iG=0; iG < gradientIt; iG++)
 	{		
@@ -802,7 +807,7 @@ int steepest_descent(constant_struct cons, vector_struct vecs, vector<double> in
 	return 0;	
 }
 
-int xyz_files_read(constant_struct &cons, vector_struct &vecs, string xyzFile, bool genFileNames, string phiCoordFile)
+int xyz_files_read(constant_struct cons, vector_struct &vecs, string xyzFile, bool genFileNames, string phiCoordFile)
 {
 	ifstream xyzStream;
 	
@@ -1037,7 +1042,7 @@ int xyz_files_read(constant_struct &cons, vector_struct &vecs, string xyzFile, b
 	return 0;
 }
 
-int connectivity_read(constant_struct &cons, vector_struct &vecs, string connectFile)
+int connectivity_read(constant_struct cons, vector_struct &vecs, string connectFile)
 {
 	ifstream connectStream;	
 	cout << "Opening " << connectFile << endl;
@@ -1148,7 +1153,7 @@ int connectivity_read(constant_struct &cons, vector_struct &vecs, string connect
 	return 0;
 }
 
-int connectivity_process(constant_struct &cons, vector_struct &vecs)
+int connectivity_process(constant_struct cons, vector_struct &vecs)
 {
 	// Read atoms separated by one bond
 	for (int i=0; i < cons.size[0]; i++)
@@ -1158,8 +1163,8 @@ int connectivity_process(constant_struct &cons, vector_struct &vecs)
 			int m1 = i*cons.size[0] + j; // Convert to 1D array coordinate
 			int m2 = j*cons.size[0] + i; // Symmetric matrix
 			
-			int atomI = vecs.atomData[i*cons.atomDataSize]; // Get actual atom number from file
-			int atomJ = vecs.atomData[j*cons.atomDataSize];
+			int atomI = int(round(vecs.atomData[i*cons.atomDataSize])); // Get actual atom number from file
+			int atomJ = int(round(vecs.atomData[j*cons.atomDataSize]));
 			
 			// Search bonds list
 			bool bondFound = 0;
@@ -1236,8 +1241,8 @@ int connectivity_process(constant_struct &cons, vector_struct &vecs)
 		for (int j=i; j < cons.size[0]; j++)
 		{
 			int m1 = i*cons.size[0]+j;
-			int a1 = vecs.atomData[i*cons.atomDataSize];
-			int a2 = vecs.atomData[j*cons.atomDataSize];
+			int a1 = int(round(vecs.atomData[i*cons.atomDataSize]));
+			int a2 = int(round(vecs.atomData[j*cons.atomDataSize]));
 			//int m2 = j*cons.size[0]+i;
 			bool toFit = 0;
 			
@@ -1312,7 +1317,7 @@ int connectivity_process(constant_struct &cons, vector_struct &vecs)
 	return 0;
 }
 
-int constant_energy_process(constant_struct &cons, vector_struct &vecs)
+int constant_energy_process(constant_struct cons, vector_struct &vecs)
 {
 	int print_rij = 0;
 	vector<double> coords(3*cons.size[0]);
@@ -1333,7 +1338,7 @@ int constant_energy_process(constant_struct &cons, vector_struct &vecs)
 		vecs.constantEnergy[f] = 0.0;
 		
 		// Read coordinates
-		for (int k=0; k < cons.size[0]; k++)
+		for (int k=0; k<cons.size[0]; k++)
 		{
 			coords[k*3    ] = vecs.xyzData[f*cons.size[0]*3 + k*3    ];
 			coords[k*3 + 1] = vecs.xyzData[f*cons.size[0]*3 + k*3 + 1];
@@ -1344,12 +1349,12 @@ int constant_energy_process(constant_struct &cons, vector_struct &vecs)
 		// Calculate angle (bending) energy
 		for (int c=0; c < cons.size[2]; c++)
 		{
-			int i = vecs.angleData[c*cons.angleDataSize    ] - 1;
-			int j = vecs.angleData[c*cons.angleDataSize + 1] - 1;
-			int k = vecs.angleData[c*cons.angleDataSize + 2] - 1;
+			int i = int(round(vecs.angleData[c*cons.angleDataSize    ] - 1));
+			int j = int(round(vecs.angleData[c*cons.angleDataSize + 1] - 1));
+			int k = int(round(vecs.angleData[c*cons.angleDataSize + 2] - 1));
 			// -1 Because atoms are numbered starting from one in the input file
 			
-			double theta0 = vecs.angleData[c*cons.angleDataSize + 3]*PI_/180.0;
+			double theta0 = vecs.angleData[c*cons.angleDataSize + 3]*cons.pi/180.0;
 			double kTheta = vecs.angleData[c*cons.angleDataSize + 4];
 	
 			// vec j->i
@@ -1369,17 +1374,17 @@ int constant_energy_process(constant_struct &cons, vector_struct &vecs)
 
 			double theta = acos(dot12/(modVec1*modVec2));
 			energyAngle += 0.5*kTheta*(theta-theta0)*(theta-theta0);
-			//cout << "theta, theta0: " << theta*180.0/PI_ << ", " << theta0*180.0/PI_ << endl;
+			//cout << "theta, theta0: " << theta*180.0/cons.pi << ", " << theta0*180.0/cons.pi << endl;
 		}
 		
 		// Calculate dihedral angles and constant energy contribution
 		int nDfit = 0;
 		for (int d=0; d < cons.size[3]; d++)
 		{
-			int i = vecs.dihedralData[d*cons.dihedralDataSize    ] - 1;
-			int j = vecs.dihedralData[d*cons.dihedralDataSize + 1] - 1;
-			int k = vecs.dihedralData[d*cons.dihedralDataSize + 2] - 1;
-			int l = vecs.dihedralData[d*cons.dihedralDataSize + 3] - 1;
+			int i = int(round(vecs.dihedralData[d*cons.dihedralDataSize    ] - 1));
+			int j = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 1] - 1));
+			int k = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 2] - 1));
+			int l = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 3] - 1));
 			//cout << "ijkl: " << i << " " << j << " " << k << " " << l << endl;
 
 			// Calculate vectors b1 = rj-ri, b2 = rk-rj, b3 = rl-rk
@@ -1425,15 +1430,15 @@ int constant_energy_process(constant_struct &cons, vector_struct &vecs)
 				crossVec3[2]*crossVec2[2]); //dot(d1,c2);
         
 			double phi = atan2(y,x);
-			double psi = phi - PI_;
+			double psi = phi - cons.pi;
 			
-			//cout << "d, phi: " << d << ", " << phi*180.0/PI_ << endl;
+			//cout << "d, phi: " << d << ", " << phi*180.0/cons.pi << endl;
 			
 			// Calculate cosine psi
 			double cosPsi = cos(psi);
 				
 			// Add cosines for dihedrals to be used in fitting procedure
-			int dType = vecs.dihedralData[d*cons.dihedralDataSize + 4];
+			int dType = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 4]));
 			if (dType != 0)
 			{				
 				vecs.cosPsiData[f*cons.numDihedralFit + nDfit] = cosPsi;
@@ -1451,10 +1456,10 @@ int constant_energy_process(constant_struct &cons, vector_struct &vecs)
 		for (int id=0; id<cons.size[4]; id++)
 		{
 			// Calculate angle between planes ijk and jkl
-			int i = vecs.improperData[id*cons.improperDataSize    ] - 1; // -1 for 0-based arrays
-			int j = vecs.improperData[id*cons.improperDataSize + 1] - 1;
-			int k = vecs.improperData[id*cons.improperDataSize + 2] - 1;
-			int l = vecs.improperData[id*cons.improperDataSize + 3] - 1;
+			int i = int(round(vecs.improperData[id*cons.improperDataSize    ] - 1)); // -1 for 0-based arrays
+			int j = int(round(vecs.improperData[id*cons.improperDataSize + 1] - 1));
+			int k = int(round(vecs.improperData[id*cons.improperDataSize + 2] - 1));
+			int l = int(round(vecs.improperData[id*cons.improperDataSize + 3] - 1));
 			//cout << "ijkl: " << i << " " << j << " " << k << " " << l << endl;
 
 			// Calculate vectors b1 = rj-ri, b2 = rk-rj, b3 = rl-rk
@@ -1502,18 +1507,18 @@ int constant_energy_process(constant_struct &cons, vector_struct &vecs)
 			double phi = atan2(y,x);
 			
 			// Input params are in degrees and (kJ/mol)/rad^2
-			double phi0 = (PI_/180.0)*vecs.improperData[id*cons.improperDataSize + 4];
+			double phi0 = (cons.pi/180.0)*vecs.improperData[id*cons.improperDataSize + 4];
 			double kHarm = vecs.improperData[id*cons.improperDataSize + 5];
 			
 			// Shift phi into range phi0-180 <= phi <= phi0+180
-			if (phi <= phi0-PI_)
-				phi += 2*PI_;
-			else if (phi >= phi0+PI_)
-				phi -= 2*PI_;
+			if (phi <= phi0-cons.pi)
+				phi += 2*cons.pi;
+			else if (phi >= phi0+cons.pi)
+				phi -= 2*cons.pi;
 			
 			// Sum energy
 			energyImproper += kHarm*(phi-phi0)*(phi-phi0);
-			//cout << "phi, phi0, k: " << (180.0/PI_)*phi << " " << (180.0/PI_)*phi0;
+			//cout << "phi, phi0, k: " << (180.0/cons.pi)*phi << " " << (180.0/cons.pi)*phi0;
 			//cout << " " << kHarm << endl;
 		}
 		
@@ -1526,8 +1531,8 @@ int constant_energy_process(constant_struct &cons, vector_struct &vecs)
 			for (int j=(i+1); j < cons.size[0]; j++) // j>i
 			{
 				int m1 = i*cons.size[0]+j;
-				int atomI = vecs.atomData[i*cons.atomDataSize]; // Get actual atom number from file data
-				int atomJ = vecs.atomData[j*cons.atomDataSize]; 
+				int atomI = int(round(vecs.atomData[i*cons.atomDataSize])); // Get actual atom number from file data
+				int atomJ = int(round(vecs.atomData[j*cons.atomDataSize])); 
 				int atomIC = atomI - 1; // Subtract 1 for C arrays
 				int atomJC = atomJ - 1;
 				
@@ -1602,7 +1607,7 @@ int constant_energy_process(constant_struct &cons, vector_struct &vecs)
 	return 0;
 }
 
-int energy_read(constant_struct &cons, vector_struct &vecs, string energyFile)
+int energy_read(constant_struct cons, vector_struct &vecs, string energyFile)
 {
 	ifstream energyStream;
 	energyStream.open(energyFile);
@@ -1622,11 +1627,11 @@ int energy_read(constant_struct &cons, vector_struct &vecs, string energyFile)
 	return 0;
 }
 
-int define_initial_simplex(constant_struct &cons, vector<double> initialParams, vector<double> &simplex)
+int define_initial_simplex(constant_struct cons, vector<double> initialParams, vector<double> &simplex)
 {
-	int ssM1 = (cons.numTotalParams); // Width of simplex, i.e. total number of params
-	const double factorLJ = -0.01;
-	const double dihedralStep = 1.0;
+	int ssM1 = cons.numTotalParams; // Width of simplex, i.e. total number of params
+	const double factorLJ = -0.001;
+	const double dihedralStep = 0.5;
 	
 	// Fill in simplex, add perturbation to diagonal elements
 	for (int n=0; n<cons.simplexSize; n++)
@@ -1666,7 +1671,7 @@ int define_initial_simplex(constant_struct &cons, vector<double> initialParams, 
 	return 0;
 }
 
-double error_from_trial_point(constant_struct cons, vector<double> initialParams, vector<double> &trialParams, int trialStart, vector_struct vecs, bool toWrite)
+long double error_from_trial_point(constant_struct cons, vector<double> initialParams, vector<double> &trialParams, int trialStart, vector_struct vecs, bool toWrite)
 {
 	ofstream energyMD;
 	ofstream energyDist;
@@ -1685,7 +1690,7 @@ double error_from_trial_point(constant_struct cons, vector<double> initialParams
 		energyDist.open("energyDist.txt");
 	}
 	
-	double sumResid = 0.0;
+	long double sumResid = 0.0;
 	
 	// Loop over configurations
 	for (int f=0; f<cons.numConfigs; f++)
@@ -1702,7 +1707,7 @@ double error_from_trial_point(constant_struct cons, vector<double> initialParams
 			double coeff = 0.0;
 			
 			// Get diherdal type
-			int dType = vecs.dihedralData[d*cons.dihedralDataSize + 4];
+			int dType = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 4]));
 			//cout << "dType = " << dType << endl;
 			
 			// Type 0 dihedrals are the ones not varying during the fit
@@ -1797,7 +1802,7 @@ int compute_gradient(constant_struct cons, vector_struct vecs, vector<double> in
 			double coeff = 0.0;
 			
 			// Get diherdal type
-			int dType = vecs.dihedralData[d*cons.dihedralDataSize + 4];
+			int dType = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 4]));
 			
 			// Type 0 dihedrals are the ones not varying during the fit
 			if (dType > 0)
@@ -1854,7 +1859,7 @@ int compute_gradient(constant_struct cons, vector_struct vecs, vector<double> in
 		dd = 0;
 		for (int d=0; d<cons.size[3]; d++)
 		{
-			int dType = vecs.dihedralData[d*cons.dihedralDataSize + 4];			
+			int dType = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 4]));			
 			if (dType > 0)
 			{	
 				// Start at n=1 term in dihedral potential
@@ -1900,9 +1905,14 @@ int compute_gradient(constant_struct cons, vector_struct vecs, vector<double> in
 	return 0;
 }
 
-int error_sort(int simplexSize, vector<double> simplexErrors, vector<int> &errorRankToRow)
+int error_sort(int simplexSize, vector<long double> simplexErrors, vector<int> &errorRankToRow)
 {
-	// Bubble sort (list is nearly sorted)
+	// Randomise list
+    std::random_device rd;
+    std::mt19937 rand_rd(rd());
+	std::shuffle(errorRankToRow.begin(), errorRankToRow.end(), rand_rd);
+	
+	// Bubble sort
 	bool swapPerformed = 1;
 	while (swapPerformed == 1)
 	{

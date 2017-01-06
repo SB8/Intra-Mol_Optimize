@@ -3,10 +3,10 @@
 #define xyzFormat "Angstroms" 
 #define inputFileString "input_files_DME.txt"
 
-const double PI_ = 3.14159265359;
-
 struct constant_struct
 {
+	long double pi;
+	
 	int nrexcl;
 	int gromacsCombRule;
 	double scale14LJ;
@@ -52,10 +52,10 @@ struct constant_struct
 	double epsilonStep;
 	double KT;
   
-	double simplexAlpha;
-	double simplexGamma;
-	double simplexBeta;
-	double simplexSigma;
+	double nmReflect;
+	double nmExpand;
+	double nmContract;
+	double nmShrink;
   
 	double sigmaGradFactor;
 };
@@ -87,15 +87,15 @@ struct vector_struct
 
 // Function prototypes
 int read_input_params(constant_struct &cons, vector_struct &vecs, bool genFileNames);
-int xyz_files_read(constant_struct &cons, vector_struct &vecs, string xyzFile, bool genFileNames, string phiCoordFile);
-int connectivity_read(constant_struct &cons, vector_struct &vecs, string connectFile);
-int connectivity_process(constant_struct &cons, vector_struct &vecs);
-int energy_read(constant_struct &cons, vector_struct &vecs, string energyFile);
-int constant_energy_process(constant_struct &cons, vector_struct &vecs);
-int define_initial_simplex(constant_struct &cons, vector<double> initialParams, vector<double> &simplex);
-double error_from_trial_point(constant_struct cons, vector<double> initialParams, vector<double> &trialParams, int trialStart, vector_struct vecs, bool toWrite);
+int xyz_files_read(constant_struct cons, vector_struct &vecs, string xyzFile, bool genFileNames, string phiCoordFile);
+int connectivity_read(constant_struct cons, vector_struct &vecs, string connectFile);
+int connectivity_process(constant_struct cons, vector_struct &vecs);
+int energy_read(constant_struct cons, vector_struct &vecs, string energyFile);
+int constant_energy_process(constant_struct cons, vector_struct &vecs);
+int define_initial_simplex(constant_struct cons, vector<double> initialParams, vector<double> &simplex);
+long double error_from_trial_point(constant_struct cons, vector<double> initialParams, vector<double> &trialParams, int trialStart, vector_struct vecs, bool toWrite);
 int compute_gradient(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> currentParams, vector<double> &gradVector);
-int error_sort(int simplexSize, vector<double> simplexErrors, vector<int> &errorRankToRow);
+int error_sort(int simplexSize, vector<long double> simplexErrors, vector<int> &errorRankToRow);
 
 int simulated_annealing(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int annealIt);
 int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int simplexIt);
