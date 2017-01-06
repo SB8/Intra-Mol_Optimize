@@ -17,7 +17,7 @@ using std::vector;
 using std::ifstream;
 using std::ofstream;
 
-#include "DIHEDRAL_FIT_HEADER.h"
+#include "IMO_header.h"
 
 int read_input_params(constant_struct &cons, vector_struct &vecs, bool genFileNames)
 {
@@ -1315,7 +1315,7 @@ int connectivity_process(constant_struct &cons, vector_struct &vecs)
 int constant_energy_process(constant_struct &cons, vector_struct &vecs)
 {
 	int print_rij = 0;
-	double coords[3*cons.size[0]];
+	vector<double> coords(3*cons.size[0]);
 	double aVec1[3], aVec2[3];
 	double dVec1[3], dVec2[3], dVec3[3];
 	double crossVec1[3], crossVec2[3], crossVec3[3];
