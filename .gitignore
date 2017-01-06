@@ -1,2 +1,6 @@
 xyz_files/
 IME_exe.out
+annealing_energy.txt
+simplex_energy.txt
+cg_energy.txt
+IMO_exe.out
