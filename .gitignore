@@ -4,3 +4,6 @@ annealing_energy.txt
 simplex_energy.txt
 cg_energy.txt
 IMO_exe.out
+energyConst.txt
+energyDist.txt
+energyMD.txt
