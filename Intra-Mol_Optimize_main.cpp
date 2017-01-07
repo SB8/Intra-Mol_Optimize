@@ -20,11 +20,12 @@ using std::ofstream;
 
 #include "IMO_header.h"
 
-int read_input_params(constant_struct &cons, vector_struct &vecs, bool genFileNames)
+int read_input_params(constant_struct &cons, vector_struct &vecs)
 {
-	cons.xyzAngstroms = true;
-	
+	cons.inputFileString = "input_files_DME.txt";
 	cons.pi = acosl(-1.0L);
+		
+	cons.xyzAngstroms = true;
 	
 	cons.nrexcl = 3;
 	cons.gromacsCombRule = 2;
@@ -44,12 +45,9 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, bool genFileNa
 		cons.phi2max = 360.0;
 		cons.phi2step = 5.0;
 		
-		if (genFileNames) {
-			int numPhi1 = round( (cons.phi1max-cons.phi1min)/cons.phi1step + 1);
-			int numPhi2 = round( (cons.phi2max-cons.phi2min)/cons.phi2step + 1);
-			cons.numConfigs = numPhi1*numPhi2;
-		}
-		
+		int numPhi1 = round((cons.phi1max-cons.phi1min)/cons.phi1step + 1);
+		int numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
+		cons.numConfigs = numPhi1*numPhi2;		
 	}
 	else if (cons.phiDim == 3)	
 	{
@@ -63,12 +61,10 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, bool genFileNa
 		cons.phi3max = 340.0;
 		cons.phi3step = 20.0;	
 		
-		if (genFileNames) {
-			int numPhi1 = round( (cons.phi1max-cons.phi1min)/cons.phi1step + 1);
-			int numPhi2 = round( (cons.phi2max-cons.phi2min)/cons.phi2step + 1);
-			int numPhi3 = round( (cons.phi3max-cons.phi3min)/cons.phi3step + 1);
-			cons.numConfigs = numPhi1*numPhi2*numPhi3;
-		}
+		int numPhi1 = round((cons.phi1max-cons.phi1min)/cons.phi1step + 1);
+		int numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
+		int numPhi3 = round((cons.phi3max-cons.phi3min)/cons.phi3step + 1);
+		cons.numConfigs = numPhi1*numPhi2*numPhi3;
 	}
 	
 	cons.resToZero = 0;
@@ -81,7 +77,7 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, bool genFileNa
 	//cons.KT = 83.14; // 10,000K (TraPPE)
 	
 	
-	// Molecule specific parameters
+	// Molecule specific parameters (overwrite numConfigs if needed)
 	if (cons.inputFileString == "input_files_EC.txt") {
 		cons.resToZero = 1;
 		cons.numConfigs = 869;
@@ -119,6 +115,28 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, bool genFileNa
 	cons.nmShrink = 0.5;
 	
 	cons.sigmaGradFactor = 0.01;
+	
+	
+	// Get filenames from inputFileString
+	ifstream inputNames;
+	cout << "Opening input file " << cons.inputFileString << endl;
+	inputNames.open(cons.inputFileString.c_str());
+
+	inputNames >> cons.xyzFile >> cons.energyFile >> cons.connectFile >> cons.genXyzFileNames;
+	
+	if (!cons.genXyzFileNames)
+		inputNames >> cons.phiCoordFile;	
+	
+	// Read number of atoms, bonds etc. from first section of input file
+	ifstream connectStream;
+	connectStream.open(cons.connectFile.c_str());
+
+	string fileHeader;
+	connectStream >> fileHeader;
+	assert(fileHeader == "size");
+	
+	// Read connectivity size
+	connectStream >> cons.size[0] >> cons.size[1] >> cons.size[2] >> cons.size[3] >> cons.size[4] >> cons.size[5];
 	
 	// Set size of vectors
 	vecs.xyzData.resize(cons.numConfigs*cons.size[0]*3);	
@@ -169,50 +187,22 @@ int main(int argc, char *argv[])
 	// Initialise data structures
 	constant_struct cons; // Constants 
 	vector_struct vecs;   // Vectors
-	
-	// Get filenames from inputFileString
-	cons.inputFileString = "input_files_DME.txt"; 
-	
-	ifstream inputNames;
-	cout << "Opening input file " << cons.inputFileString << endl;
-	inputNames.open(cons.inputFileString.c_str());
-
-	bool genFileNames;
-	string xyzFile, energyFile, connectFile, phiCoordFile;
-	inputNames >> xyzFile >> energyFile >> connectFile >> genFileNames;
-	
-	if (genFileNames)
-		phiCoordFile = '.'; // Don't need a filename if generating them
-	else
-		inputNames >> phiCoordFile;
 		
-	
-	// Read number of atoms, bonds etc. from first section of input file
-	ifstream connectStream;
-	connectStream.open(connectFile);
-
-	string fileHeader;
-	connectStream >> fileHeader;
-	assert(fileHeader == "size");
-	
-	// Read connectivity size
-	connectStream >> cons.size[0] >> cons.size[1] >> cons.size[2] >> cons.size[3] >> cons.size[4] >> cons.size[5];
-		
-	read_input_params(cons, vecs, genFileNames);
+	read_input_params(cons, vecs);
 	
 	srand(time(NULL));
 	
 	// Read xyz files
-	xyz_files_read(cons, vecs, xyzFile, genFileNames, phiCoordFile);
+	xyz_files_read(cons, vecs);
 		
 	// Read connectivity data
-	connectivity_read(cons, vecs, connectFile);
+	connectivity_read(cons, vecs);
 	
 	// Process connectivity data
 	connectivity_process(cons, vecs);
 	
 	// Read energy file
-	int energyRead = energy_read(cons, vecs, energyFile);	
+	int energyRead = energy_read(cons, vecs);	
 	if (energyRead == 1)
 		return 1;
 	
@@ -226,13 +216,9 @@ int main(int argc, char *argv[])
 	cons.numDihedralParams = 2*(cons.nRBfit-1) + 1;	// +1 is the constant energy term
 		
 	if (cons.size[5] == 0)
-	{
 		cons.numTotalParams = cons.numDihedralParams;
-	}
 	else
-	{
 		cons.numTotalParams = cons.numDihedralParams + 2;
-	}
 		
 	vector<double> initialParams(cons.numTotalParams);
 	vector<double> currentParams(cons.numTotalParams);
@@ -814,12 +800,12 @@ int steepest_descent(constant_struct cons, vector_struct vecs, vector<double> in
 	return 0;	
 }
 
-int xyz_files_read(constant_struct cons, vector_struct &vecs, string xyzFile, bool genFileNames, string phiCoordFile)
+int xyz_files_read(constant_struct cons, vector_struct &vecs)
 {
 	ifstream xyzStream;
 	
 	// Loop over full (usually 360 degree) range at specificed step size
-	if (genFileNames)
+	if (cons.genXyzFileNames)
 	{
 		int fileRow=0, f=0;
 		
@@ -879,11 +865,11 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs, string xyzFile, bo
 							cout << "Warning: timestep has 4 digits (undefined behaviour)\n";
 						
 						// Generate file name		
-						string fileName = xyzFile + d1Str + "_" + d2Str + "-" + tsStr + ".xyz";
+						string fullFileName = cons.xyzFile + d1Str + "_" + d2Str + "-" + tsStr + ".xyz";
 
-						//cout << "Opening xyz file " << fileName << endl;
+						//cout << "Opening xyz file " << fullFileName << endl;
 				
-						xyzStream.open(fileName);
+						xyzStream.open(fullFileName.c_str());
 				
 						// Once we cannot open the file, we read data from the previous file
 						if (!xyzStream.is_open())
@@ -891,8 +877,8 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs, string xyzFile, bo
 							file_open = 0;
 							xyzStream.close();
 							// Get previous file name
-							fileName = xyzFile + d1Str + "_" + d2Str + "-" + tsStrPrev + ".xyz";
-							xyzStream.open(fileName);
+							fullFileName = cons.xyzFile + d1Str + "_" + d2Str + "-" + tsStrPrev + ".xyz";
+							xyzStream.open(fullFileName.c_str());
 
 							// Ignore first 2 lines and atom name (as per XYZ format)
 							int line1;
@@ -950,13 +936,13 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs, string xyzFile, bo
 								cout << "Warning: timestep has 4 digits (undefined behaviour)\n";
 						
 							// Generate file name		
-							string fileName = xyzFile + d1Str + "_" + d2Str + "_" + d3Str + "-" + tsStr + ".xyz";
+							string fullFileName = cons.xyzFile + d1Str + "_" + d2Str + "_" + d3Str + "-" + tsStr + ".xyz";
 				
 							// Open file
 					
 							//cout << "Opening " << fileName << endl;
 				
-							xyzStream.open(fileName);
+							xyzStream.open(fullFileName);
 				
 							// Once we cannot open the file, we read data from the previous file
 							if (!xyzStream.is_open())
@@ -964,10 +950,10 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs, string xyzFile, bo
 								file_open = 0;
 								xyzStream.close();
 								// Get previous file name
-								fileName = xyzFile + d1Str + "_" + d2Str + "_" + d3Str + "-" + tsStrPrev + ".xyz";
-								xyzStream.open(fileName);
+								fullFileName = cons.xyzFile + d1Str + "_" + d2Str + "_" + d3Str + "-" + tsStrPrev + ".xyz";
+								xyzStream.open(fullFileName.c_str());
 								// Read data
-								cout << "Reading file " << f << ", " << fileName << endl;
+								cout << "Reading file " << f << ", " << fullFileName << endl;
 								// Ignore first 2 lines and atom name (as per XYZ format)
 								int line1;
 								string line2, atom;
@@ -997,9 +983,9 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs, string xyzFile, bo
 		assert(cons.phiDim == 2);
 		
 		ifstream phiPairStream, xyzStream;
-		cout << "Reading phi pairs from " << phiCoordFile << endl;
+		cout << "Reading phi pairs from " << cons.phiCoordFile << endl;
 			
-		phiPairStream.open(phiCoordFile);
+		phiPairStream.open(cons.phiCoordFile.c_str());
 		if(!phiPairStream.is_open())
 		{
 			cout << "Error, phi pair file cannot be opened!" << endl;
@@ -1024,11 +1010,11 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs, string xyzFile, bo
 			
 			// Generate xyz filename
 			// This method assumes the files end with "-000.xyz"
-			string fileName = xyzFile + phi1Str + "_" + phi2Str + "-000" + ".xyz";
+			string fileName = cons.xyzFile + phi1Str + "_" + phi2Str + "-000" + ".xyz";
 			
 			//cout << "Opening xyz file: " << fileName << endl;
 			
-			xyzStream.open(fileName);
+			xyzStream.open(fileName.c_str());
 			
 			// Ignore first 2 lines and atom name (as per XYZ format)
 			int line1;
@@ -1048,11 +1034,11 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs, string xyzFile, bo
 	return 0;
 }
 
-int connectivity_read(constant_struct cons, vector_struct &vecs, string connectFile)
+int connectivity_read(constant_struct cons, vector_struct &vecs)
 {
 	ifstream connectStream;	
-	cout << "Opening " << connectFile << endl;
-	connectStream.open(connectFile);
+	cout << "Opening " << cons.connectFile << endl;
+	connectStream.open(cons.connectFile.c_str());
 	// Skip first two lines
 	char s[128];
 	connectStream.getline(s,128);
@@ -1614,10 +1600,10 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs)
 	return 0;
 }
 
-int energy_read(constant_struct cons, vector_struct &vecs, string energyFile)
+int energy_read(constant_struct cons, vector_struct &vecs)
 {
 	ifstream energyStream;
-	energyStream.open(energyFile);
+	energyStream.open(cons.energyFile.c_str());
 	
 	if(!energyStream.is_open())
 	{

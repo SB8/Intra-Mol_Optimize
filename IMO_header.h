@@ -5,7 +5,12 @@ struct constant_struct
 	long double pi;
 	
 	bool xyzAngstroms;
-	std::string inputFileString;
+	bool genXyzFileNames;
+	string inputFileString;	
+	string xyzFile;
+	string energyFile;
+	string connectFile;
+	string phiCoordFile;
 	
 	int nrexcl;
 	int gromacsCombRule;
@@ -86,11 +91,11 @@ struct vector_struct
 };
 
 // Function prototypes
-int read_input_params(constant_struct &cons, vector_struct &vecs, bool genFileNames);
-int xyz_files_read(constant_struct cons, vector_struct &vecs, string xyzFile, bool genFileNames, string phiCoordFile);
-int connectivity_read(constant_struct cons, vector_struct &vecs, string connectFile);
+int read_input_params(constant_struct &cons, vector_struct &vecs);
+int xyz_files_read(constant_struct cons, vector_struct &vecs);
+int connectivity_read(constant_struct cons, vector_struct &vecs);
 int connectivity_process(constant_struct cons, vector_struct &vecs);
-int energy_read(constant_struct cons, vector_struct &vecs, string energyFile);
+int energy_read(constant_struct cons, vector_struct &vecs);
 int constant_energy_process(constant_struct cons, vector_struct &vecs);
 int define_initial_simplex(constant_struct cons, vector<double> initialParams, vector<double> &simplex);
 long double error_from_trial_point(constant_struct cons, vector<double> initialParams, vector<double> &trialParams, int trialStart, vector_struct vecs, bool toWrite);
