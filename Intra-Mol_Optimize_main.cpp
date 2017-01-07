@@ -9,6 +9,7 @@
 #include <assert.h>
 #include <random>
 #include <vector>
+#include <algorithm>
 
 using std::cout;
 using std::endl;
@@ -21,6 +22,8 @@ using std::ofstream;
 
 int read_input_params(constant_struct &cons, vector_struct &vecs, bool genFileNames)
 {
+	cons.xyzAngstroms = true;
+	
 	cons.pi = acosl(-1.0L);
 	
 	cons.nrexcl = 3;
@@ -79,12 +82,12 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, bool genFileNa
 	
 	
 	// Molecule specific parameters
-	if (inputFileString == "input_files_EC.txt") {
+	if (cons.inputFileString == "input_files_EC.txt") {
 		cons.resToZero = 1;
 		cons.numConfigs = 869;
 		cons.dihedralK = 1.0E-6;
 	}
-	if (inputFileString == "input_files_PC.txt") {
+	if (cons.inputFileString == "input_files_PC.txt") {
 		cons.resToZero = 1;
 		cons.numConfigs = 2976;
 		cons.dihedralK = 1.0E-6;
@@ -168,8 +171,11 @@ int main(int argc, char *argv[])
 	vector_struct vecs;   // Vectors
 	
 	// Get filenames from inputFileString
+	cons.inputFileString = "input_files_DME.txt"; 
+	
 	ifstream inputNames;
-	inputNames.open(inputFileString);
+	cout << "Opening input file " << cons.inputFileString << endl;
+	inputNames.open(cons.inputFileString.c_str());
 
 	bool genFileNames;
 	string xyzFile, energyFile, connectFile, phiCoordFile;
@@ -875,7 +881,7 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs, string xyzFile, bo
 						// Generate file name		
 						string fileName = xyzFile + d1Str + "_" + d2Str + "-" + tsStr + ".xyz";
 
-						cout << "Opening xyz file " << fileName << endl;
+						//cout << "Opening xyz file " << fileName << endl;
 				
 						xyzStream.open(fileName);
 				
@@ -887,8 +893,7 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs, string xyzFile, bo
 							// Get previous file name
 							fileName = xyzFile + d1Str + "_" + d2Str + "-" + tsStrPrev + ".xyz";
 							xyzStream.open(fileName);
-							// Read data
-							//cout << "Reading file " << f << ", " << fileName << endl;
+
 							// Ignore first 2 lines and atom name (as per XYZ format)
 							int line1;
 							string line2, atom;
@@ -1541,7 +1546,8 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs)
 				for (int n=0; n<3; n++)
 					rIJ[n] = coords[atomJC*3 + n] - coords[atomIC*3 + n];
 				
-				if (xyzFormat == "Angstroms")
+				// Convert A to nm
+				if (cons.xyzAngstroms)
 				{
 					for (int n=0; n<3; n++)
 						rIJ[n] *= 0.1;
