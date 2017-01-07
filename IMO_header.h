@@ -1,11 +1,11 @@
 // Header file for DME dihedral fitter
 
-#define xyzFormat "Angstroms" 
-#define inputFileString "input_files_DME.txt"
-
 struct constant_struct
 {
 	long double pi;
+	
+	bool xyzAngstroms;
+	std::string inputFileString;
 	
 	int nrexcl;
 	int gromacsCombRule;
