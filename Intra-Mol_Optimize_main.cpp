@@ -89,7 +89,7 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 		cons.dihedralK = 1.0E-6;
 	}
 	
-	cons.annealWrite = 100;
+	cons.annealWrite = 100;	// Frequency of writing lowest error to file
 	cons.downhillWrite = 10;
 	
 	cons.atomDataSize = 4;
@@ -1899,12 +1899,7 @@ int compute_gradient(constant_struct cons, vector_struct vecs, vector<double> in
 }
 
 int error_sort(int simplexSize, vector<long double> simplexErrors, vector<int> &errorRankToRow)
-{
-	// Randomise list
-    std::random_device rd;
-    std::mt19937 rand_rd(rd());
-	std::shuffle(errorRankToRow.begin(), errorRankToRow.end(), rand_rd);
-	
+{	
 	// Bubble sort
 	bool swapPerformed = 1;
 	while (swapPerformed == 1)
