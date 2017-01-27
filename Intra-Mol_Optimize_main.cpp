@@ -69,7 +69,7 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	
 	cons.resToZero = 0;
 	cons.dihedralK = 0.0;
-	cons.epsK = 1.0; 
+	cons.epsK = 10.0; // Constraint epsK*(eps-eps_fit)^2 per configuration
 	
 	//cons.KT = 2.5; // Room temperature
 	//cons.KT = 15.0; // Typical max saddle point energy
@@ -226,7 +226,7 @@ int main(int argc, char *argv[])
 	// Set adaptive Nelder-Mead parameters
 	cons.nmReflect = 1.0;
 	cons.nmExpand = 1.0 + 2.0/double(cons.numTotalParams);
-	cons.nmContract = 0.75 - 0.5/double(cons.numTotalParams);
+	cons.nmContract = 0.9 - 0.8/double(cons.numTotalParams);
 	cons.nmShrink = 1.0 - 1.0/double(cons.numTotalParams);	
 	
 	cons.simplexSize = cons.numTotalParams + 1;
@@ -379,8 +379,9 @@ int simulated_annealing(constant_struct cons, vector_struct vecs, vector<double>
 int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int simplexIt)
 {
 	cout << "\nPerforming " << simplexIt << " downhill simplex iteraitons\n\n";
-	
+	long double nmEPS = 1.0E-14L;
 	int printFreq = 100; // Print simplex to console every printFreq steps
+	int numReflectSteps = 0;
 	
 	// Generate initial simplex	
 	vector<double> simplex(cons.simplexSize*(cons.numTotalParams));
@@ -427,11 +428,27 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 		long double secondMaxError = simplexErrors[ errorRankToRow[cons.simplexSize-2] ];
 		long double minError = simplexErrors[ errorRankToRow[0] ];
 		
+		// Return if end condition met
+		if (std::fabs(maxError-minError)/maxError < nmEPS)
+		{
+			cout << std::setprecision(20) << simplexErrors[worstRow] << endl;
+			cout << std::setprecision(20) << simplexErrors[0] << endl;
+			cout << std::setprecision(20) << std::fabs(maxError-minError)/maxError << endl;
+			cout << "\nEnding downhill simplex routine after " << iD << " iterations\n\n";
+			cout << "The percentage of reflect steps was " << 100.0*double(numReflectSteps)/double(iD) << endl;
+			if (simplexIt > 0) // Update currentParams array
+			{
+				for (int col=0; col<(cons.numTotalParams); col++)
+					currentParams[col] = simplex[ errorRankToRow[0]*cons.numTotalParams + col ];		
+			}
+			return 0;		
+		}
+		
 		simplexStream << minError << endl;
 		
 		// Print best
 		if (toPrint)
-			cout << "MAX and MIN errors: " << std::setprecision(14) << std::setw(16) << maxError << " " << minError << endl;
+			cout << "MAX and MIN errors: " << std::setprecision(20) << maxError << " " << minError << endl;
 		
 		// Compute centroid of all points execpt worst
 		for (int col=0; col<cons.numTotalParams; col++)
@@ -476,6 +493,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 				simplex[maxPoint + col] = reflectParams[col];
 			}
 			simplexErrors[worstRow] = reflectError;
+			numReflectSteps++;
 		}
 		// If best, test with expansion in direction of reflected point
 		else if (reflectError < minError)
@@ -518,6 +536,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 					simplex[maxPoint + col] = reflectParams[col];
 				}
 				simplexErrors[worstRow] = reflectError;
+				numReflectSteps++;
 			
 			}
 		}
@@ -589,7 +608,6 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 				cout << endl;
 			}
 		}
-		
 	}
 	
 	if (simplexIt > 0) // Update currentParams array
@@ -598,7 +616,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 			currentParams[col] = simplex[ errorRankToRow[0]*cons.numTotalParams + col ];		
 	}
 		
-	cout << "\nEnding downhill simplex routine\n\n";
+	cout << "\nEnding downhill simplex routine after max iterations\n\n";
 	
 	return 0;
 }
