@@ -95,16 +95,15 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 		// Integration rule for each conformer section
 		vecs.integrationRule.resize((vecs.phi1partition.size()-1)*(vecs.phi2partition.size()-1));
 		
-		int i_section = 0;		
+		int i_section = 0; 
 		for (int c1=1; c1<vecs.phi1partition.size(); c1++)
 		{
 			for (int c2=1; c2<vecs.phi2partition.size(); c2++)
-			{
-				
-				int m_max = round(vecs.phi1partition[c1]/cons.phi1step);
-				int m_min = round(vecs.phi1partition[c1-1]/cons.phi1step);
-				int n_max = round(vecs.phi2partition[c2]/cons.phi2step);
-				int n_min = round(vecs.phi2partition[c2-1]/cons.phi2step);
+			{				
+				int m_max = round((vecs.phi1partition[c1]-cons.phi1min)/cons.phi1step);
+				int m_min = round((vecs.phi1partition[c1-1]-cons.phi1min)/cons.phi1step);
+				int n_max = round((vecs.phi2partition[c2]-cons.phi2min)/cons.phi2step);
+				int n_min = round((vecs.phi2partition[c2-1]-cons.phi2min)/cons.phi2step);
 				
 				int m = m_max-m_min;
 				int n = n_max-n_min;
@@ -137,10 +136,9 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 						vecs.simpsonCoeffsPhi2[i_n] = 4;
 					}			
 				}
+				i_section++;
 			}
-		}
-		for (int i=0; i<numPhi1; i++)
-			cout << endl << vecs.simpsonCoeffsPhi1[i];
+		} 
 	}
 	
 	// Constraints and restraints
@@ -1875,13 +1873,77 @@ long double error_from_trial_point(constant_struct cons, vector<double> initialP
 		sumResid += (cons.epsK*cons.numConfigs)*(epsDef - params[cons.numDihedralParams+1])*(epsDef - params[cons.numDihedralParams+1]);
 	}
 	
-	// Boltzmann integral restraint terms
+	// Boltzmann distribution integral restraint terms
 	if (cons.useBoltzIntRes == 1)
 	{
-		// Calculate Boltzmann integrals for each conformation
+		int numSections = (vecs.phi1partition.size()-1)*(vecs.phi2partition.size()-1);
+		int numConformers = *std::max_element(vecs.partitionMap.begin(),vecs.partitionMap.end());
 		
+		vector<double> sectionIntegrals(numSections, 0.0);
+		vector<double> conformerIntegrals(numConformers, 0.0);
 		
+		// Calculate Boltzmann integrals for each section
+		int i_section = 0; 
+		assert(vecs.integrationRule[i_section] == 1); // Until other integral methods supported
 		
+		//cout << endl << "Starting Boltzmann dist. integral section ";
+		
+		for (int c1=1; c1<vecs.phi1partition.size(); c1++)
+		{
+			for (int c2=1; c2<vecs.phi2partition.size(); c2++)
+			{				
+				int m_max = round((vecs.phi1partition[c1]-cons.phi1min)/cons.phi1step);
+				int m_min = round((vecs.phi1partition[c1-1]-cons.phi1min)/cons.phi1step);
+				int n_max = round((vecs.phi2partition[c2]-cons.phi2min)/cons.phi2step);
+				int n_min = round((vecs.phi2partition[c2-1]-cons.phi2min)/cons.phi2step);
+				
+				for (int i_m = m_min; i_m <= m_max; i_m++)
+				{
+					for (int i_n = n_min; i_n <= n_max; i_n++)
+					{						
+						// Convert (i_m,i_n) to 1D index f, phi1-major order
+						
+						int numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
+						int f = i_m*numPhi2 + i_n;
+						
+						if (vecs.integrationRule[i_section] == 1) // Simpsons rule
+						{
+							double intCoeff = vecs.simpsonCoeffsPhi1[i_m]*vecs.simpsonCoeffsPhi2[i_n];					
+							sectionIntegrals[i_section] += intCoeff*exp(-energyTotal[f]/cons.kTBoltzIntegral);
+							
+							//if (toWrite == 1)
+							//{
+							//	cout << endl << "i_m, i_n, f " << i_m << ", " << i_n << ", " << f;
+							//	cout << endl << "i_section, intCoeff, energyTotal[f] " << i_section << ", " << intCoeff << ", " << energyTotal[f];
+							//}
+						}
+					}	
+				}
+				
+				// Rescale sum according to integral formula
+				if (vecs.integrationRule[i_section] == 1) // Simpsons rule
+				{
+					sectionIntegrals[i_section] *= (cons.phi1step*cons.phi2step)/9.0;
+				}
+				// Add integral for this section to relevant conformer
+				conformerIntegrals[vecs.partitionMap[i_section]-1] += sectionIntegrals[i_section];
+				
+				i_section++;
+			}		
+		}
+		
+		if (toWrite == 1)
+		{
+			cout << "Complete section and conformer integral\n";
+			for (int i_sec   = 0; i_sec < sectionIntegrals.size(); i_sec++)
+				cout << sectionIntegrals[i_sec] << endl;
+			for (int i_conf = 0; i_conf < conformerIntegrals.size(); i_conf++)
+				cout << conformerIntegrals[i_conf] << endl;
+		}
+
+		
+	
+		// Calculate restraint terms
 		
 	}
 	

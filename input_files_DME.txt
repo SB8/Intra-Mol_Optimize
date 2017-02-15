@@ -1,4 +1,4 @@
-xyz_files/DME_SD_XYZ_OPLS-14_SIGMA-14-f0.90/DME_XYZ_EM_
+xyz_files/DME_SD_XYZ_OPLS-14_0.3275-0.61/DME_XYZ_EM_
 energy_profiles/DME/DME_tAB_SWEEP_B3LYP-D3_6-311++G-2d,2p_energy_kJ-mol-1.txt
 connectivity_files/connectivity_DME_no-pair-fit.txt
 1
