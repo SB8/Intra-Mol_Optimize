@@ -16,6 +16,9 @@ struct constant_struct
 	int gromacsCombRule;
 	double scale14LJ;
 	double scale14QQ;
+	double sigma14factor;
+	double sigma14factorCutoff;
+	
 	double epsQQ;
 	int nRBfit;
 	int numConfigs;
@@ -48,6 +51,9 @@ struct constant_struct
 	bool resToZero;
 	double epsK;
 	double dihedralK;
+	
+	bool useBoltzIntRes;
+	double kTBoltzIntegral;
   
 	double vTempInitial;
 	double vTempFinal;
@@ -67,6 +73,15 @@ struct constant_struct
 
 struct vector_struct
 {
+	
+	vector<double> phi1partition;
+	vector<double> phi2partition;
+	
+	vector<int> partitionMap;
+	vector<int> integrationRule;
+	vector<double> simpsonCoeffsPhi1;
+	vector<double> simpsonCoeffsPhi2;
+	
 	vector<double> xyzData;
 	vector<double> energyData;
 	vector<double> energyWeighting;

@@ -29,24 +29,28 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	
 	cons.nrexcl = 3;
 	cons.gromacsCombRule = 2;
-	cons.scale14LJ = 0.0;
+	cons.scale14LJ = 0.5;
 	cons.scale14QQ = 0.5;
+	cons.sigma14factor = 1.0; 			// Multiply sigma in 1-4 potentials by this factor
+	cons.sigma14factorCutoff = 0.3;		// Only apply sigma14factor to sigma above this cutoff
 	
 	cons.nRBfit = 6; // Highest power term is cos^(nRBfit-1)
 	
 	cons.phiDim = 2;
 	
+	int numPhi1 = 0, numPhi2 = 0, numPhi3 = 0;
+	
 	if (cons.phiDim == 2)
 	{
 		cons.phi1min = 0.0;
 		cons.phi1max = 180.0;
-		cons.phi1step = 5.0;
+		cons.phi1step = 10.0;
 		cons.phi2min = 0.0;
 		cons.phi2max = 360.0;
-		cons.phi2step = 5.0;
+		cons.phi2step = 10.0;
 		
-		int numPhi1 = round((cons.phi1max-cons.phi1min)/cons.phi1step + 1);
-		int numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
+		numPhi1 = round((cons.phi1max-cons.phi1min)/cons.phi1step + 1);
+		numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
 		cons.numConfigs = numPhi1*numPhi2;		
 	}
 	else if (cons.phiDim == 3)	
@@ -61,17 +65,94 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 		cons.phi3max = 340.0;
 		cons.phi3step = 20.0;	
 		
-		int numPhi1 = round((cons.phi1max-cons.phi1min)/cons.phi1step + 1);
-		int numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
-		int numPhi3 = round((cons.phi3max-cons.phi3min)/cons.phi3step + 1);
+		numPhi1 = round((cons.phi1max-cons.phi1min)/cons.phi1step + 1);
+		numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
+		numPhi3 = round((cons.phi3max-cons.phi3min)/cons.phi3step + 1);
 		cons.numConfigs = numPhi1*numPhi2*numPhi3;
 	}
 	
+	vecs.simpsonCoeffsPhi1.resize(numPhi1);
+	vecs.simpsonCoeffsPhi2.resize(numPhi2);
+	std::fill(vecs.simpsonCoeffsPhi1.begin(),vecs.simpsonCoeffsPhi1.begin()+numPhi1,1);
+	std::fill(vecs.simpsonCoeffsPhi2.begin(),vecs.simpsonCoeffsPhi2.begin()+numPhi2,1);
+	
+	// Partitioning of potential energy surface into conformers
+	if (cons.inputFileString == "input_files_DME.txt") {
+
+		vecs.phi1partition.push_back(0.0);
+		vecs.phi1partition.push_back(120.0); 
+		vecs.phi1partition.push_back(180.0);
+		
+		vecs.phi2partition.push_back(0.0);
+		vecs.phi2partition.push_back(120.0); 
+		vecs.phi2partition.push_back(240.0);
+		vecs.phi2partition.push_back(360.0);
+		
+		// Sections are numbered in row major order, map each to a conformer
+		int partitionMapDME[] = {4, 2, 5, 3, 1, 3}; // TGG, TGT, TGG', TTG, TTT, TTG'
+		vecs.partitionMap.assign(partitionMapDME,partitionMapDME+6);
+		
+		// Integration rule for each conformer section
+		vecs.integrationRule.resize((vecs.phi1partition.size()-1)*(vecs.phi2partition.size()-1));
+		
+		int i_section = 0;		
+		for (int c1=1; c1<vecs.phi1partition.size(); c1++)
+		{
+			for (int c2=1; c2<vecs.phi2partition.size(); c2++)
+			{
+				
+				int m_max = round(vecs.phi1partition[c1]/cons.phi1step);
+				int m_min = round(vecs.phi1partition[c1-1]/cons.phi1step);
+				int n_max = round(vecs.phi2partition[c2]/cons.phi2step);
+				int n_min = round(vecs.phi2partition[c2-1]/cons.phi2step);
+				
+				int m = m_max-m_min;
+				int n = n_max-n_min;
+				
+				// Determine if Simpson's rule integrable
+				if ( (m%2 == 0) && (n%2 == 0)) {
+					vecs.integrationRule[i_section] = 1;					
+				}
+				else {
+					vecs.integrationRule[i_section] = 0; // Trapezoid rule
+				}
+				
+				// Populate array of Simpsons and Trapezoid rule coefficients
+				for (int i_m = m_min+1; i_m < m_max; i_m++)
+				{
+					if ((i_m-m_min)%2 == 0) {
+						vecs.simpsonCoeffsPhi1[i_m] = 2;
+					}
+					else {
+						vecs.simpsonCoeffsPhi1[i_m] = 4;
+					}
+					
+				}
+				for (int i_n = n_min+1; i_n < n_max; i_n++)
+				{
+					if ((i_n-n_min)%2 == 0) {
+						vecs.simpsonCoeffsPhi2[i_n] = 2;
+					}
+					else {
+						vecs.simpsonCoeffsPhi2[i_n] = 4;
+					}			
+				}
+			}
+		}
+		for (int i=0; i<numPhi1; i++)
+			cout << endl << vecs.simpsonCoeffsPhi1[i];
+	}
+	
+	// Constraints and restraints
+	cons.useBoltzIntRes = 1;
+	cons.kTBoltzIntegral = 2.5;
+	
+	// Restraining params to default values
 	cons.resToZero = 0;
 	cons.dihedralK = 0.0;
 	cons.epsK = 10.0; // Constraint epsK*(eps-eps_fit)^2 per configuration
 	
-	//cons.KT = 2.5; // Room temperature
+	//cons.KT = 5.23; // 20.92/4
 	//cons.KT = 15.0; // Typical max saddle point energy
 	cons.KT = 20.92; // 5kcal/mol (Amber)
 	//cons.KT = 83.14; // 10,000K (TraPPE)
@@ -103,9 +184,9 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	
 	// Simulated annealing parameters
 	cons.vTempInitial = (5000 + 50*cons.KT)*double(cons.numConfigs)/1000.0;
-	cons.vTempFactor = 0.9996;
+	cons.vTempFactor = 0.9998;
 	cons.dihedralStep = 5.0;
-	cons.sigmaStep = 0.001;
+	cons.sigmaStep = 0.002;
 	cons.epsilonStep = 0.001;
 	
 	// Nelder-Mead parameters
@@ -212,6 +293,7 @@ int main(int argc, char *argv[])
 		if (vecs.dihedralData[d*cons.dihedralDataSize + 4] > 0)
 			cons.numDihedralFit++;
 	}
+	// Determine number of pairs to fit (future feature)
 	
 	cons.numDihedralParams = 2*(cons.nRBfit-1) + 1;	// +1 is the constant energy term
 		
@@ -431,9 +513,9 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 		// Return if end condition met
 		if (std::fabs(maxError-minError)/maxError < nmEPS)
 		{
-			cout << std::setprecision(20) << simplexErrors[worstRow] << endl;
-			cout << std::setprecision(20) << simplexErrors[0] << endl;
-			cout << std::setprecision(20) << std::fabs(maxError-minError)/maxError << endl;
+			cout << std::setprecision(12) << simplexErrors[worstRow] << endl;
+			cout << std::setprecision(12) << simplexErrors[0] << endl;
+			cout << std::setprecision(12) << std::fabs(maxError-minError)/maxError << endl;
 			cout << "\nEnding downhill simplex routine after " << iD << " iterations\n\n";
 			cout << "The percentage of reflect steps was " << 100.0*double(numReflectSteps)/double(iD) << endl;
 			if (simplexIt > 0) // Update currentParams array
@@ -643,10 +725,10 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 	// Do initial steepest descent step with full line search
 	compute_gradient(cons, vecs, initialParams, currentParams, gradVector);	
 	
-	double alpha = 0.01, tau = 0.5; // Starting step size and reduction factor
+	double alpha = 0.1, tau = 0.4; // Starting step size and reduction factor
 	double currentBestAlpha = alpha;
 		
-	const int nMax = 30; // Maximum number of iterations in line search
+	const int nMax = 45; // Maximum number of iterations in line search
 	long double lineSearchF[nMax];
 	long double currentBestF = previousF;
 		
@@ -685,7 +767,7 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 		
 		cout << "\nNew grad: ";
 		for (int row=0; row<(cons.numTotalParams); row++)
-			cout << std::setw(8) << gradVectorNew[row] << " ";
+			cout << std::setprecision(8) << std::setw(11) << gradVectorNew[row] << " ";
 		cout << endl << endl;
 
 		
@@ -749,7 +831,7 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 		for (int col=0; col<(cons.numTotalParams); col++)
 		{
 			currentParams[col] = tempParams[col];
-			cout << std::setw(10) << currentParams[col] << " ";
+			cout << std::setprecision(8) << std::setw(11)  << currentParams[col] << " ";
 		}	
 		cout << endl;
 	}		
@@ -1278,7 +1360,12 @@ int connectivity_process(constant_struct cons, vector_struct &vecs)
 			// 1-4 Interactions (can be removed by setting scale14LJ & scale14QQ to zero)
 			if (vecs.bondSepMat[m1] == 3)
 			{
-				vecs.sigmaMatrix[m1] = sigma;
+				if (sigma > cons.sigma14factorCutoff) {
+					vecs.sigmaMatrix[m1] = sigma*cons.sigma14factor;
+				}
+				else {
+					vecs.sigmaMatrix[m1] = sigma;
+				}
 				vecs.epsilonMatrix[m1] = cons.scale14LJ*epsilon;
 				vecs.qqMatrix[m1] = cons.scale14QQ*QQ;
 			}
@@ -1687,6 +1774,7 @@ long double error_from_trial_point(constant_struct cons, vector<double> initialP
 	ofstream energyMD;
 	ofstream energyDist;
 	vector<double> params(cons.numTotalParams);
+	vector<double> energyTotal(cons.numConfigs);
 
 	// Extract params from trialParams input vector
 	// This could be a simplex matrix, in which case trialStart is the first element of the row of params to test
@@ -1752,32 +1840,33 @@ long double error_from_trial_point(constant_struct cons, vector<double> initialP
 			// LJ parameters for this pair
 			double sigmaPair = params[cons.numDihedralParams];
 			double epsilonPair = params[cons.numDihedralParams + 1];
-			double r = vecs.pairSepData[f*cons.size[5] + pair];				
+			double r = vecs.pairSepData[f*cons.size[5] + pair];
 			double LJ6 = pow(sigmaPair/r, 6);
 					
 			energyPair += 4.0*epsilonPair*(LJ6*LJ6-LJ6);
 		}
 			
 		// Total energy of configuration f for trial point
-		double energyTotal = vecs.constantEnergy[f] + energyPair + energyDihedral;
+		energyTotal[f] = vecs.constantEnergy[f] + energyPair + energyDihedral;
 			
 		// Compare to input energy and sum weighted square of residual
-		sumResid += (vecs.energyData[f]-energyTotal)*(vecs.energyData[f]-energyTotal)*vecs.energyWeighting[f];
+		sumResid += (vecs.energyData[f]-energyTotal[f])*(vecs.energyData[f]-energyTotal[f])*vecs.energyWeighting[f];
 		
 		// Write to file
 		if (toWrite == 1)
 		{
-			energyMD << energyTotal << endl;
+			energyMD << energyTotal[f] << endl;
 			energyDist << vecs.constantEnergy[f] << ", " << energyDihedral << ", " << energyPair << endl;	
 		}
-	}
+	} // End of config loop
+	
 	// Dihedral coefficient restraint terms
 	for (int coeff=1; coeff<cons.numDihedralParams; coeff++) 
 	{
 		if (cons.resToZero == 1)
 			sumResid += (cons.dihedralK*cons.numConfigs)*params[coeff]*params[coeff];
 		else
-			sumResid += (cons.dihedralK*cons.numConfigs)*(params[coeff]-params[coeff])*(params[coeff]-params[coeff]);
+			sumResid += (cons.dihedralK*cons.numConfigs)*(initialParams[coeff]-params[coeff])*(initialParams[coeff]-params[coeff]);
 	}
 	// Epsilon restraint term
 	if (cons.size[5] != 0)
@@ -1785,7 +1874,16 @@ long double error_from_trial_point(constant_struct cons, vector<double> initialP
 		double epsDef = initialParams[cons.numTotalParams-1];
 		sumResid += (cons.epsK*cons.numConfigs)*(epsDef - params[cons.numDihedralParams+1])*(epsDef - params[cons.numDihedralParams+1]);
 	}
-	    
+	
+	// Boltzmann integral restraint terms
+	if (cons.useBoltzIntRes == 1)
+	{
+		// Calculate Boltzmann integrals for each conformation
+		
+		
+		
+		
+	}
 	
 	return sumResid;
 }
