@@ -54,6 +54,7 @@ struct constant_struct
 	
 	bool useBoltzIntRes;
 	double kTBoltzIntegral;
+	double kBoltzRes;
   
 	double vTempInitial;
 	double vTempFinal;
@@ -81,6 +82,7 @@ struct vector_struct
 	vector<int> integrationRule;
 	vector<double> simpsonCoeffsPhi1;
 	vector<double> simpsonCoeffsPhi2;
+	vector<double> confIntegralsDFT;
 	
 	vector<double> xyzData;
 	vector<double> energyData;
@@ -114,7 +116,8 @@ int energy_read(constant_struct cons, vector_struct &vecs);
 int constant_energy_process(constant_struct cons, vector_struct &vecs);
 int define_initial_simplex(constant_struct cons, vector<double> initialParams, vector<double> &simplex);
 long double error_from_trial_point(constant_struct cons, vector<double> initialParams, vector<double> &trialParams, int trialStart, vector_struct vecs, bool toWrite);
-int compute_gradient(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> currentParams, vector<double> &gradVector);
+int compute_boltzmann_integrals(constant_struct cons, vector_struct vecs, vector<double> energyTotal, vector<double> &confIntegralsMD, bool toPrint);
+int compute_gradient_F(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> currentParams, vector<double> &gradVector);
 int error_sort(int simplexSize, vector<long double> simplexErrors, vector<int> &errorRankToRow);
 
 int simulated_annealing(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int annealIt);

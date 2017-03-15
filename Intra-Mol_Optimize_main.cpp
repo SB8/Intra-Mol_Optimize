@@ -29,14 +29,32 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	
 	cons.nrexcl = 3;
 	cons.gromacsCombRule = 2;
-	cons.scale14LJ = 0.5;
+	cons.scale14LJ = 0.0;
 	cons.scale14QQ = 0.5;
 	cons.sigma14factor = 1.0; 			// Multiply sigma in 1-4 potentials by this factor
 	cons.sigma14factorCutoff = 0.3;		// Only apply sigma14factor to sigma above this cutoff
 	
+	// Boltzmann integral restraints (only works in 2D)
+	cons.useBoltzIntRes = 0;
+	//cons.kTBoltzIntegral = 2.5; // Room temp
+	cons.kTBoltzIntegral = 3.3258; // 400K
+	//cons.kTBoltzIntegral = 9.977292; // 1200K
+	cons.kBoltzRes = 0.0;
+	
+	// Restraining params to default values
+	cons.resToZero = 0;
+	cons.dihedralK = 0.0;
+	cons.epsK = 10.0; // Constraint epsK*(eps-eps_fit)^2 per configuration
+	
+	//cons.KT = 2.5;
+	//cons.KT = 5.23; // 20.92/4
+	//cons.KT = 15.0; // Typical max saddle point energy
+	cons.KT = 20.92; // 5kcal/mol (Amber)
+	//cons.KT = 83.14; // 10,000K (TraPPE)
+	
 	cons.nRBfit = 6; // Highest power term is cos^(nRBfit-1)
 	
-	cons.phiDim = 2;
+	cons.phiDim = 3;
 	
 	int numPhi1 = 0, numPhi2 = 0, numPhi3 = 0;
 	
@@ -69,6 +87,8 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 		numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
 		numPhi3 = round((cons.phi3max-cons.phi3min)/cons.phi3step + 1);
 		cons.numConfigs = numPhi1*numPhi2*numPhi3;
+		
+		cons.useBoltzIntRes = 0;
 	}
 	
 	vecs.simpsonCoeffsPhi1.resize(numPhi1);
@@ -91,6 +111,10 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 		// Sections are numbered in row major order, map each to a conformer
 		int partitionMapDME[] = {4, 2, 5, 3, 1, 3}; // TGG, TGT, TGG', TTG, TTT, TTG'
 		vecs.partitionMap.assign(partitionMapDME,partitionMapDME+6);
+		
+		int numConformers = *std::max_element(vecs.partitionMap.begin(),vecs.partitionMap.end());
+		vecs.confIntegralsDFT.resize(numConformers);
+		std::fill(vecs.confIntegralsDFT.begin(),vecs.confIntegralsDFT.end(),0.0); // Ensure 0 filled
 		
 		// Integration rule for each conformer section
 		vecs.integrationRule.resize((vecs.phi1partition.size()-1)*(vecs.phi2partition.size()-1));
@@ -125,7 +149,6 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 					else {
 						vecs.simpsonCoeffsPhi1[i_m] = 4;
 					}
-					
 				}
 				for (int i_n = n_min+1; i_n < n_max; i_n++)
 				{
@@ -140,20 +163,6 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 			}
 		} 
 	}
-	
-	// Constraints and restraints
-	cons.useBoltzIntRes = 1;
-	cons.kTBoltzIntegral = 2.5;
-	
-	// Restraining params to default values
-	cons.resToZero = 0;
-	cons.dihedralK = 0.0;
-	cons.epsK = 10.0; // Constraint epsK*(eps-eps_fit)^2 per configuration
-	
-	//cons.KT = 5.23; // 20.92/4
-	//cons.KT = 15.0; // Typical max saddle point energy
-	cons.KT = 20.92; // 5kcal/mol (Amber)
-	//cons.KT = 83.14; // 10,000K (TraPPE)
 	
 	
 	// Molecule specific parameters (overwrite numConfigs if needed)
@@ -181,13 +190,13 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	cons.numDihedralFit = 0;
 	
 	// Simulated annealing parameters
-	cons.vTempInitial = (5000 + 50*cons.KT)*double(cons.numConfigs)/1000.0;
+	cons.vTempInitial = (5000 + 50*cons.KT)/1000.0; // Starting guess
 	cons.vTempFactor = 0.9998;
 	cons.dihedralStep = 5.0;
 	cons.sigmaStep = 0.002;
 	cons.epsilonStep = 0.001;
 	
-	// Nelder-Mead parameters
+	// Default Nelder-Mead parameters (updated in main)
 	cons.nmReflect = 1.0;
 	cons.nmExpand = 2.0;
 	cons.nmContract = 0.8;
@@ -518,8 +527,13 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 			cout << "The percentage of reflect steps was " << 100.0*double(numReflectSteps)/double(iD) << endl;
 			if (simplexIt > 0) // Update currentParams array
 			{
+				cout << "\n Best params from simplex:\n";
 				for (int col=0; col<(cons.numTotalParams); col++)
+				{
 					currentParams[col] = simplex[ errorRankToRow[0]*cons.numTotalParams + col ];		
+					cout << currentParams[col] << " ";
+				}
+					
 			}
 			return 0;		
 		}
@@ -692,8 +706,9 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 	
 	if (simplexIt > 0) // Update currentParams array
 	{
-		for (int col=0; col<(cons.numTotalParams); col++)
-			currentParams[col] = simplex[ errorRankToRow[0]*cons.numTotalParams + col ];		
+		for (int col=0; col<(cons.numTotalParams); col++) {
+			currentParams[col] = simplex[errorRankToRow[0]*cons.numTotalParams + col];
+		}				
 	}
 		
 	cout << "\nEnding downhill simplex routine after max iterations\n\n";
@@ -721,7 +736,7 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 	cgStream.open("cg_energy.txt");
 	
 	// Do initial steepest descent step with full line search
-	compute_gradient(cons, vecs, initialParams, currentParams, gradVector);	
+	compute_gradient_F(cons, vecs, initialParams, currentParams, gradVector);	
 	
 	double alpha = 0.1, tau = 0.4; // Starting step size and reduction factor
 	double currentBestAlpha = alpha;
@@ -761,7 +776,7 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 	{
 		
 		// Get gradient corresponding to x_n, write to gradVectorNew
-		compute_gradient(cons, vecs, initialParams, currentParams, gradVectorNew);	
+		compute_gradient_F(cons, vecs, initialParams, currentParams, gradVectorNew);	
 		
 		cout << "\nNew grad: ";
 		for (int row=0; row<(cons.numTotalParams); row++)
@@ -848,7 +863,7 @@ int steepest_descent(constant_struct cons, vector_struct vecs, vector<double> in
 	for (int iG=0; iG < gradientIt; iG++)
 	{		
 		// Get gradient corresponding to current parameters
-		compute_gradient(cons, vecs, initialParams, currentParams, gradVector);	
+		compute_gradient_F(cons, vecs, initialParams, currentParams, gradVector);	
 		
 		cout << "\nGrad: ";
 		for (int row=0; row<cons.numTotalParams; row++)
@@ -1698,7 +1713,9 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs)
 		
 		constEnStream << energyAngle << ", " << energyDihedral << ", " << energyImproper << ", ";
 		constEnStream << energy14 << ", " << energy15 << ", " << energyNB << endl;
-	}
+	
+	} // End config loop
+	
 	constEnStream.close();
 	return 0;
 }
@@ -1720,6 +1737,61 @@ int energy_read(constant_struct cons, vector_struct &vecs)
 		vecs.energyWeighting[f] *= exp(-vecs.energyData[f]/cons.KT); // Apply Boltzmann weighting 
 		//cout << vecs.energyWeighting[f] << endl;
 	}
+	
+	// Integrate DFT energy over conformers
+	if (cons.useBoltzIntRes == 1)
+	{
+		int numSections = (vecs.phi1partition.size()-1)*(vecs.phi2partition.size()-1);	
+		vector<double> sectionIntegrals(numSections, 0.0);
+	
+		// Calculate Boltzmann distribution integrals for each section
+		int i_section = 0; 
+		assert(vecs.integrationRule[i_section] == 1); // Until other integral methods supported
+	
+		for (int c1=1; c1<vecs.phi1partition.size(); c1++)
+		{
+			for (int c2=1; c2<vecs.phi2partition.size(); c2++)
+			{				
+				int m_max = round((vecs.phi1partition[c1]-cons.phi1min)/cons.phi1step);
+				int m_min = round((vecs.phi1partition[c1-1]-cons.phi1min)/cons.phi1step);
+				int n_max = round((vecs.phi2partition[c2]-cons.phi2min)/cons.phi2step);
+				int n_min = round((vecs.phi2partition[c2-1]-cons.phi2min)/cons.phi2step);
+			
+				for (int i_m = m_min; i_m <= m_max; i_m++)
+				{
+					for (int i_n = n_min; i_n <= n_max; i_n++)
+					{						
+						// Convert (i_m,i_n) to 1D index f, phi1-major order
+					
+						int numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
+						int f = i_m*numPhi2 + i_n;
+					
+						if (vecs.integrationRule[i_section] == 1) // Simpsons rule
+						{
+							double intCoeff = vecs.simpsonCoeffsPhi1[i_m]*vecs.simpsonCoeffsPhi2[i_n];					
+							sectionIntegrals[i_section] += intCoeff*exp(-vecs.energyData[f]/cons.kTBoltzIntegral);
+						}
+					}	
+				}
+			
+				// Rescale sum according to integral formula
+				if (vecs.integrationRule[i_section] == 1) // Simpsons rule
+				{
+					sectionIntegrals[i_section] *= (cons.phi1step*cons.phi2step)/9.0;
+				}
+				// Add integral for this section to relevant conformer
+				vecs.confIntegralsDFT[vecs.partitionMap[i_section]-1] += sectionIntegrals[i_section];
+			
+				i_section++;
+			}		
+		}
+		
+		cout << "\n DFT conformer integrals:\n";
+		for (int i_conf = 0; i_conf < vecs.confIntegralsDFT.size(); i_conf++) {
+			cout << vecs.confIntegralsDFT[i_conf] << endl;
+		}
+	}
+	
 	return 0;
 }
 
@@ -1858,101 +1930,130 @@ long double error_from_trial_point(constant_struct cons, vector<double> initialP
 		}
 	} // End of config loop
 	
+	// Normalize sum of residuals by number of configs
+	sumResid /= double(cons.numConfigs);
+	
 	// Dihedral coefficient restraint terms
 	for (int coeff=1; coeff<cons.numDihedralParams; coeff++) 
 	{
 		if (cons.resToZero == 1)
-			sumResid += (cons.dihedralK*cons.numConfigs)*params[coeff]*params[coeff];
+			sumResid += cons.dihedralK*params[coeff]*params[coeff];
 		else
-			sumResid += (cons.dihedralK*cons.numConfigs)*(initialParams[coeff]-params[coeff])*(initialParams[coeff]-params[coeff]);
+			sumResid += cons.dihedralK*(initialParams[coeff]-params[coeff])*(initialParams[coeff]-params[coeff]);
 	}
 	// Epsilon restraint term
 	if (cons.size[5] != 0)
 	{
 		double epsDef = initialParams[cons.numTotalParams-1];
-		sumResid += (cons.epsK*cons.numConfigs)*(epsDef - params[cons.numDihedralParams+1])*(epsDef - params[cons.numDihedralParams+1]);
+		sumResid += cons.epsK*(epsDef - params[cons.numDihedralParams+1])*(epsDef - params[cons.numDihedralParams+1]);
 	}
 	
-	// Boltzmann distribution integral restraint terms
+	// Calculate Boltzmann distribution integrals -----------------------------------------
 	if (cons.useBoltzIntRes == 1)
 	{
-		int numSections = (vecs.phi1partition.size()-1)*(vecs.phi2partition.size()-1);
 		int numConformers = *std::max_element(vecs.partitionMap.begin(),vecs.partitionMap.end());
-		
-		vector<double> sectionIntegrals(numSections, 0.0);
-		vector<double> conformerIntegrals(numConformers, 0.0);
-		
-		// Calculate Boltzmann integrals for each section
-		int i_section = 0; 
-		assert(vecs.integrationRule[i_section] == 1); // Until other integral methods supported
-		
-		//cout << endl << "Starting Boltzmann dist. integral section ";
-		
-		for (int c1=1; c1<vecs.phi1partition.size(); c1++)
-		{
-			for (int c2=1; c2<vecs.phi2partition.size(); c2++)
-			{				
-				int m_max = round((vecs.phi1partition[c1]-cons.phi1min)/cons.phi1step);
-				int m_min = round((vecs.phi1partition[c1-1]-cons.phi1min)/cons.phi1step);
-				int n_max = round((vecs.phi2partition[c2]-cons.phi2min)/cons.phi2step);
-				int n_min = round((vecs.phi2partition[c2-1]-cons.phi2min)/cons.phi2step);
-				
-				for (int i_m = m_min; i_m <= m_max; i_m++)
-				{
-					for (int i_n = n_min; i_n <= n_max; i_n++)
-					{						
-						// Convert (i_m,i_n) to 1D index f, phi1-major order
-						
-						int numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
-						int f = i_m*numPhi2 + i_n;
-						
-						if (vecs.integrationRule[i_section] == 1) // Simpsons rule
-						{
-							double intCoeff = vecs.simpsonCoeffsPhi1[i_m]*vecs.simpsonCoeffsPhi2[i_n];					
-							sectionIntegrals[i_section] += intCoeff*exp(-energyTotal[f]/cons.kTBoltzIntegral);
-							
-							//if (toWrite == 1)
-							//{
-							//	cout << endl << "i_m, i_n, f " << i_m << ", " << i_n << ", " << f;
-							//	cout << endl << "i_section, intCoeff, energyTotal[f] " << i_section << ", " << intCoeff << ", " << energyTotal[f];
-							//}
-						}
-					}	
-				}
-				
-				// Rescale sum according to integral formula
-				if (vecs.integrationRule[i_section] == 1) // Simpsons rule
-				{
-					sectionIntegrals[i_section] *= (cons.phi1step*cons.phi2step)/9.0;
-				}
-				// Add integral for this section to relevant conformer
-				conformerIntegrals[vecs.partitionMap[i_section]-1] += sectionIntegrals[i_section];
-				
-				i_section++;
-			}		
-		}
-		
-		if (toWrite == 1)
-		{
-			cout << "Complete section and conformer integral\n";
-			for (int i_sec   = 0; i_sec < sectionIntegrals.size(); i_sec++)
-				cout << sectionIntegrals[i_sec] << endl;
-			for (int i_conf = 0; i_conf < conformerIntegrals.size(); i_conf++)
-				cout << conformerIntegrals[i_conf] << endl;
-		}
-
-		
+			
+		vector<double> confIntegralsMD(numConformers, 0.0);
+		compute_boltzmann_integrals(cons, vecs, energyTotal, confIntegralsMD, toWrite);
 	
-		// Calculate restraint terms
+		// Calculate Boltzmann integral restraint terms
+		assert(confIntegralsMD.size() == vecs.confIntegralsDFT.size());
 		
+		double sumIntegralsDFT = std::accumulate(vecs.confIntegralsDFT.begin(), vecs.confIntegralsDFT.end(), 0.0);
+		double sumIntegralsMD = std::accumulate(confIntegralsMD.begin(), confIntegralsMD.end(), 0.0);
+			
+		double sumRMS = 0.0;
+		
+		if (toWrite == 1) {
+			cout << "FracDFT    FracMD" << endl;
+		}
+		
+		for (int i_conf = 0; i_conf < confIntegralsMD.size(); i_conf++)
+		{
+			double fracDFT = vecs.confIntegralsDFT[i_conf]/sumIntegralsDFT;
+			double fracMD = confIntegralsMD[i_conf]/sumIntegralsMD;		
+			
+			sumResid += cons.kBoltzRes*(fracDFT-fracMD)*(fracDFT-fracMD);
+			
+			if (toWrite == 1) {
+				sumRMS += (fracDFT-fracMD)*(fracDFT-fracMD);
+				cout << std::setprecision(6) << fracDFT << " " << fracMD << " " << endl;			
+			}
+		}
+		sumRMS = sqrt(sumRMS/confIntegralsMD.size());
+		if (toWrite == 1) {
+		cout << "RMS = " << sumRMS << endl;
+		}
 	}
 	
 	return sumResid;
 }
 
-int compute_gradient(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> currentParams, vector<double> &gradVector)
+int compute_boltzmann_integrals(constant_struct cons, vector_struct vecs, vector<double> energyTotal, vector<double> &confIntegralsMD, bool toPrint)
 {
-	// Reset grad vector
+	int numSections = (vecs.phi1partition.size()-1)*(vecs.phi2partition.size()-1);
+	
+	vector<double> sectionIntegrals(numSections, 0.0);
+	
+	// Calculate Boltzmann distribution integrals for each section
+	int i_section = 0; 
+	assert(vecs.integrationRule[i_section] == 1); // Until other integral methods supported
+	
+	for (int c1=1; c1<vecs.phi1partition.size(); c1++)
+	{
+		for (int c2=1; c2<vecs.phi2partition.size(); c2++)
+		{				
+			int m_max = round((vecs.phi1partition[c1]-cons.phi1min)/cons.phi1step);
+			int m_min = round((vecs.phi1partition[c1-1]-cons.phi1min)/cons.phi1step);
+			int n_max = round((vecs.phi2partition[c2]-cons.phi2min)/cons.phi2step);
+			int n_min = round((vecs.phi2partition[c2-1]-cons.phi2min)/cons.phi2step);
+			
+			for (int i_m = m_min; i_m <= m_max; i_m++)
+			{
+				for (int i_n = n_min; i_n <= n_max; i_n++)
+				{						
+					// Convert (i_m,i_n) to 1D index f, phi1-major order					
+					int numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
+					int f = i_m*numPhi2 + i_n;
+					
+					if (vecs.integrationRule[i_section] == 1) // Simpsons rule
+					{
+						double intCoeff = vecs.simpsonCoeffsPhi1[i_m]*vecs.simpsonCoeffsPhi2[i_n];					
+						sectionIntegrals[i_section] += intCoeff*exp(-energyTotal[f]/cons.kTBoltzIntegral);
+					}
+				}	
+			}
+			
+			// Rescale sum according to integral formula
+			if (vecs.integrationRule[i_section] == 1) // Simpsons rule
+			{
+				sectionIntegrals[i_section] *= (cons.phi1step*cons.phi2step)/9.0;
+			}
+			// Map integral for this section to relevant conformer
+			confIntegralsMD[vecs.partitionMap[i_section]-1] += sectionIntegrals[i_section];
+			
+			i_section++;
+		}		
+	}
+	
+	if (toPrint == 1)
+	{
+		cout << "Complete section and conformer integrals:\n\n";
+		for (int i_sec = 0; i_sec < sectionIntegrals.size(); i_sec++) {
+			cout << i_sec << ": " << sectionIntegrals[i_sec] << endl;
+		}
+		cout << endl;
+		for (int i_conf = 0; i_conf < confIntegralsMD.size(); i_conf++) {
+			cout << i_conf << ": " << confIntegralsMD[i_conf] << endl;
+		}
+	}
+	return 0;
+}
+
+
+int compute_gradient_F(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> currentParams, vector<double> &gradVector)
+{
+	// Ensure grad vector is zero
 	for (int col=0; col<cons.numTotalParams; col++)
 	{
 		gradVector[col] = 0.0;
