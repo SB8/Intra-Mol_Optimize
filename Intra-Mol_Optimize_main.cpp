@@ -22,7 +22,7 @@ using std::ofstream;
 
 int read_input_params(constant_struct &cons, vector_struct &vecs)
 {
-	cons.inputFileString = "input_files_DME.txt";
+	cons.inputFileString = "input_files_DMM.txt";
 	cons.pi = acosl(-1.0L);
 		
 	cons.xyzAngstroms = true;
@@ -36,8 +36,8 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	
 	// Boltzmann integral restraints (only works in 2D)
 	cons.useBoltzIntRes = 0;
-	//cons.kTBoltzIntegral = 2.5; // Room temp
-	cons.kTBoltzIntegral = 3.3258; // 400K
+	cons.kTBoltzIntegral = 2.5; // Room temp
+	//cons.kTBoltzIntegral = 3.3258; // 400K
 	//cons.kTBoltzIntegral = 9.977292; // 1200K
 	cons.kBoltzRes = 0.0;
 	
@@ -54,7 +54,7 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	
 	cons.nRBfit = 6; // Highest power term is cos^(nRBfit-1)
 	
-	cons.phiDim = 3;
+	cons.phiDim = 2;
 	
 	int numPhi1 = 0, numPhi2 = 0, numPhi3 = 0;
 	
@@ -75,13 +75,13 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	{
 		cons.phi1min = 0.0;
 		cons.phi1max = 180.0;
-		cons.phi1step = 20.0;
+		cons.phi1step = 10.0;
 		cons.phi2min = 0.0;
-		cons.phi2max = 340.0;
-		cons.phi2step = 20.0;
+		cons.phi2max = 360.0;
+		cons.phi2step = 10.0;
 		cons.phi3min = 0.0;
-		cons.phi3max = 340.0;
-		cons.phi3step = 20.0;	
+		cons.phi3max = 360.0;
+		cons.phi3step = 10.0;	
 		
 		numPhi1 = round((cons.phi1max-cons.phi1min)/cons.phi1step + 1);
 		numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
@@ -219,12 +219,50 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	ifstream connectStream;
 	connectStream.open(cons.connectFile.c_str());
 
-	string fileHeader;
-	connectStream >> fileHeader;
-	assert(fileHeader == "size");
-	
 	// Read connectivity size
-	connectStream >> cons.size[0] >> cons.size[1] >> cons.size[2] >> cons.size[3] >> cons.size[4] >> cons.size[5];
+	for (int sec=0; sec<6; sec++)
+		cons.size[sec] = 0;
+	
+	string connectLine;
+	int section;
+	while(getline(connectStream, connectLine))
+	{
+		if (connectLine.find("atoms") != string::npos)
+			section = 0;
+		else if (connectLine.find("bonds") != string::npos)
+		{
+			assert (section == 0);
+			section = 1;
+		}
+		else if (connectLine.find("angles") != string::npos)
+		{
+			assert (section == 1);
+			section = 2;
+		}
+		else if (connectLine.find("dihedrals") != string::npos)
+		{
+			assert (section == 2);
+			section = 3;
+		}
+		else if (connectLine.find("impropers") != string::npos)
+		{
+			assert (section == 3);
+			section = 4;
+		}
+		else if (connectLine.find("lj_pair_fit") != string::npos)
+		{
+			assert (section == 4);
+			section = 5;
+		}
+		else if (!connectLine.empty())
+		{
+			cons.size[section] += 1;
+		}
+	}
+	
+	//connectStream >> cons.size[0] >> cons.size[1] >> cons.size[2] >> cons.size[3] >> cons.size[4] >> cons.size[5];
+	for (int sec=0; sec<6; sec++)
+		cout << cons.size[sec] << endl;
 	
 	// Set size of vectors
 	vecs.xyzData.resize(cons.numConfigs*cons.size[0]*3);	
@@ -297,17 +335,24 @@ int main(int argc, char *argv[])
 	// Deterine number of dihedrals to fit, and the starting parameters
 	for (int d = 0; d < cons.size[3]; d++)
 	{
+		if (vecs.dihedralData[d*cons.dihedralDataSize + 4] > cons.numDihedralFit)
+			cons.numDihedralFitUnique = vecs.dihedralData[d*cons.dihedralDataSize + 4];
 		if (vecs.dihedralData[d*cons.dihedralDataSize + 4] > 0)
-			cons.numDihedralFit++;
+			cons.numDihedralFit += 1;
 	}
-	// Determine number of pairs to fit (future feature)
 	
-	cons.numDihedralParams = 2*(cons.nRBfit-1) + 1;	// +1 is the constant energy term
+	cout << "numDihedralFit = " << cons.numDihedralFit << endl; 
+	cout << "numDihedralFitUnique = " << cons.numDihedralFitUnique << endl;
+	
+	// Determine number of pairs to fit (future feature)
+	cons.numDihedralParams = cons.numDihedralFitUnique*(cons.nRBfit-1) + 1;	// +1 is the constant energy term
 		
 	if (cons.size[5] == 0)
 		cons.numTotalParams = cons.numDihedralParams;
 	else
 		cons.numTotalParams = cons.numDihedralParams + 2;
+	
+	cout << "numTotalParams = " << cons.numTotalParams << endl;
 		
 	vector<double> initialParams(cons.numTotalParams);
 	vector<double> currentParams(cons.numTotalParams);
@@ -1066,7 +1111,7 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs)
 								fullFileName = cons.xyzFile + d1Str + "_" + d2Str + "_" + d3Str + "-" + tsStrPrev + ".xyz";
 								xyzStream.open(fullFileName.c_str());
 								// Read data
-								cout << "Reading file " << f << ", " << fullFileName << endl;
+								//cout << "Reading file " << f << ", " << fullFileName << endl;
 								// Ignore first 2 lines and atom name (as per XYZ format)
 								int line1;
 								string line2, atom;
@@ -1152,10 +1197,6 @@ int connectivity_read(constant_struct cons, vector_struct &vecs)
 	ifstream connectStream;	
 	cout << "Opening " << cons.connectFile << endl;
 	connectStream.open(cons.connectFile.c_str());
-	// Skip first two lines
-	char s[128];
-	connectStream.getline(s,128);
-	connectStream.getline(s,128);
 	
 	string fileSection;
 	// Read atoms (with charges and van der Waals parameters)
@@ -1735,7 +1776,7 @@ int energy_read(constant_struct cons, vector_struct &vecs)
 	{
 		energyStream >> vecs.energyData[f];
 		vecs.energyWeighting[f] *= exp(-vecs.energyData[f]/cons.KT); // Apply Boltzmann weighting 
-		//cout << vecs.energyWeighting[f] << endl;
+		//cout << vecs.energyData[f] << endl;
 	}
 	
 	// Integrate DFT energy over conformers
@@ -1877,14 +1918,14 @@ long double error_from_trial_point(constant_struct cons, vector<double> initialP
 			
 			// Get diherdal type
 			int dType = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 4]));
-			//cout << "dType = " << dType << endl;
+			//cout << "d, dType = " << d << ", " << dType << endl;
 			
 			// Type 0 dihedrals are the ones not varying during the fit
 			if (dType > 0)
 			{	
 				double cosPsi = vecs.cosPsiData[f*cons.numDihedralFit+dd];
 				dd++;
-				
+
 				for (int rb=0; rb<cons.nRBfit; rb++)
 				{
 					// Get coefficient
@@ -2049,7 +2090,6 @@ int compute_boltzmann_integrals(constant_struct cons, vector_struct vecs, vector
 	}
 	return 0;
 }
-
 
 int compute_gradient_F(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> currentParams, vector<double> &gradVector)
 {

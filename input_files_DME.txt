@@ -1,4 +1,4 @@
-xyz_files/DME_3D_SD_XYZ_0.317-0.61/DME_XYZ_EM_
-energy_profiles/DME/DME_3D-SWEEP_B3LYP-D3_6-311++G-2d,2p_energy_kJ-mol-1.txt
+xyz_files/DME_SD_XYZ_0.317-0.61/DME_XYZ_EM_
+energy_profiles/DME/DME_tAB_B3LYP-D3_6-311++G-2d,2p_energy_kJ-mol-1.txt
 connectivity_files/connectivity_DME.txt
 1

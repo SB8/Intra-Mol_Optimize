@@ -44,6 +44,7 @@ struct constant_struct
 	int pairDataSize;
 	int size[6];
 	int numDihedralFit;
+	int numDihedralFitUnique;
 	int numDihedralParams;
 	int numTotalParams;
 	int simplexSize;
