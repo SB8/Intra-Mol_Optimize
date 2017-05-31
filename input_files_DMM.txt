@@ -1,4 +1,4 @@
-xyz_files/DMM_CG_XYZ/DMM_XYZ_EM_
+xyz_files/DMM_CG_0.5fLJ_XYZ/DMM_XYZ_EM_
 energy_profiles/DMM/DMM_2D-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
 connectivity_files/connectivity_DMM_no-pair-fit.txt
 1

@@ -1,40 +1,93 @@
-#include <cmath>
-#include <stdio.h>
-#include <stdlib.h> 
-#include <time.h> 
-#include <string>
-#include <iostream>
-#include <fstream>
-#include <iomanip>
-#include <assert.h>
-#include <random>
-#include <vector>
-#include <algorithm>
-
-using std::cout;
-using std::endl;
-using std::string;
-using std::vector;
-using std::ifstream;
-using std::ofstream;
 
 #include "IMO_header.h"
 
 int read_input_params(constant_struct &cons, vector_struct &vecs)
 {
-	cons.inputFileString = "input_files_DMM.txt";
+	// Get filenames from inputFileString
+	ifstream inputNames;
+	cout << "Opening input file " << cons.inputFileString << endl;
+	inputNames.open(cons.inputFileString.c_str());
+	
+	// Get parameter file name
+	inputNames >> cons.parameterFile;
+	cout << "Reading parameters from " << cons.parameterFile << endl;
+
+	// Variable/input data
+	//FILE *ifp;
+	//ifp = fopen(cons.parameterFile.c_str(), "r");
+	
+	ifstream paramStream;
+	paramStream.open(cons.parameterFile.c_str());
+	
+	input_data_struct inputDefaults[] = {
+		{"gen_xyz_file_names", TYPE_INT, &(cons.genXyzFileNames), "1"},
+		{"phi_dim", TYPE_INT, &(cons.phiDim), "2"},
+		{"phi1_range", TYPE_FLOAT_3VEC, &(cons.phi1Range), "0.0 180.0 10.0"},
+		{"phi2_range", TYPE_FLOAT_3VEC, &(cons.phi2Range), "0.0 360.0 10.0"},
+		{"phi3_range", TYPE_FLOAT_3VEC, &(cons.phi3Range), "0.0 360.0 10.0"},
+		{"num_phi_surfaces", TYPE_INT, &(cons.numPhiSurfaces), "1"},
+		{"kt_obj_func", TYPE_FLOAT, &(cons.KT), "20.92"},
+		{"highest_order_rb_term", TYPE_INT, &(cons.nRBfit), "6"},
+		{"scale_1_4_qq", TYPE_FLOAT, &(cons.scale14QQ), "0.5"},
+		{"scale_1_4_lj", TYPE_FLOAT, &(cons.scale14LJ), "0.0"},
+		{"LJ_comb_rule", TYPE_INT, &(cons.gromacsCombRule), "2"},
+		{"eps_restraint_k", TYPE_FLOAT, &(cons.epsK), "1.0"},
+		{"intra_mol_exclusion", TYPE_INT, &(cons.nrexcl), "3"},
+		{"use_nwchem_suffix", TYPE_INT, &(cons.useNWsuffix), "1"},
+		{"weight_edges_periodically", TYPE_INT, &(cons.weightPhiEdges), "1"},
+		{"sigma_1_4_factor", TYPE_FLOAT, &(cons.sigma14factor), "1.0"},
+		{"sigma_1_4_factor_cutoff", TYPE_FLOAT, &(cons.sigma14factorCutoff), "0.3"}
+	};
+	
+	int inputDefaultSize = sizeof(inputDefaults)/sizeof(inputDefaults[0]);
+		
+	// Set defaults
+	for (int p=0; p<inputDefaultSize; p++) {
+		char defaultLine[WORD_STRING_SIZE] = {0};
+		sprintf(defaultLine, "%s %s", inputDefaults[p].keyword, inputDefaults[p].defString);
+		process_input_line(&defaultLine[0], inputDefaults, inputDefaultSize, 0);
+	}
+	
+	// Read parameters from file
+	int nLines=0;
+	string fLine;
+	
+    while(getline(paramStream, fLine)) {
+		nLines++;
+		process_input_line(fLine, inputDefaults, inputDefaultSize, 1);
+		fLine[0] = '\0';
+    }
+	
+	// Read other files
+	inputNames >> cons.energyFile >> cons.connectFile;
+	cout << "Energy file: " << cons.energyFile << endl;
+	cout << "Connectivity file: " << cons.connectFile << endl;
+	
+	// xyz files
+	if (cons.genXyzFileNames) {
+		vecs.xyzFileList.resize(cons.numPhiSurfaces);
+		for (int xf=0; xf<cons.numPhiSurfaces; xf++) {
+			inputNames >> vecs.xyzFileList[xf];
+			cout << "XYZ file: " << vecs.xyzFileList[xf] << endl;
+		}
+	}
+	else {
+		vecs.xyzFileList.resize(1);
+		inputNames >> vecs.xyzFileList[0];
+		cout << "XYZ file: " << vecs.xyzFileList[0] << endl;
+		cons.numPhiSurfaces = 1;
+	}
+	
 	cons.pi = acosl(-1.0L);
 		
 	cons.xyzAngstroms = true;
+
+	if (cons.sigma14factor != 1.0) { 
+		cout << "Warning: Sigma-1,4 = " << cons.sigma14factor << ". Press any key to continue.";
+		std::cin.ignore();
+	}
 	
-	cons.nrexcl = 3;
-	cons.gromacsCombRule = 2;
-	cons.scale14LJ = 0.0;
-	cons.scale14QQ = 0.5;
-	cons.sigma14factor = 1.0; 			// Multiply sigma in 1-4 potentials by this factor
-	cons.sigma14factorCutoff = 0.3;		// Only apply sigma14factor to sigma above this cutoff
-	
-	// Boltzmann integral restraints (only works in 2D)
+	// Boltzmann conformer integral restraints (only works in 2D)
 	cons.useBoltzIntRes = 0;
 	cons.kTBoltzIntegral = 2.5; // Room temp
 	//cons.kTBoltzIntegral = 3.3258; // 400K
@@ -44,51 +97,21 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	// Restraining params to default values
 	cons.resToZero = 0;
 	cons.dihedralK = 0.0;
-	cons.epsK = 10.0; // Constraint epsK*(eps-eps_fit)^2 per configuration
-	
-	//cons.KT = 2.5;
-	//cons.KT = 5.23; // 20.92/4
-	//cons.KT = 15.0; // Typical max saddle point energy
-	cons.KT = 20.92; // 5kcal/mol (Amber)
-	//cons.KT = 83.14; // 10,000K (TraPPE)
-	
-	cons.nRBfit = 6; // Highest power term is cos^(nRBfit-1)
-	
-	cons.phiDim = 2;
 	
 	int numPhi1 = 0, numPhi2 = 0, numPhi3 = 0;
 	
-	if (cons.phiDim == 2)
-	{
-		cons.phi1min = 0.0;
-		cons.phi1max = 180.0;
-		cons.phi1step = 10.0;
-		cons.phi2min = 0.0;
-		cons.phi2max = 360.0;
-		cons.phi2step = 10.0;
-		
-		numPhi1 = round((cons.phi1max-cons.phi1min)/cons.phi1step + 1);
-		numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
+	if (cons.phiDim == 2) {		
+		numPhi1 = round((cons.phi1Range[1]-cons.phi1Range[0])/cons.phi1Range[2] + 1);
+		numPhi2 = round((cons.phi2Range[1]-cons.phi2Range[0])/cons.phi2Range[2] + 1);
+		numPhi3 = 0;
 		cons.numConfigs = numPhi1*numPhi2;		
 	}
-	else if (cons.phiDim == 3)	
-	{
-		cons.phi1min = 0.0;
-		cons.phi1max = 180.0;
-		cons.phi1step = 10.0;
-		cons.phi2min = 0.0;
-		cons.phi2max = 360.0;
-		cons.phi2step = 10.0;
-		cons.phi3min = 0.0;
-		cons.phi3max = 360.0;
-		cons.phi3step = 10.0;	
-		
-		numPhi1 = round((cons.phi1max-cons.phi1min)/cons.phi1step + 1);
-		numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
-		numPhi3 = round((cons.phi3max-cons.phi3min)/cons.phi3step + 1);
+	else if (cons.phiDim == 3) {
+		numPhi1 = round((cons.phi1Range[1]-cons.phi1Range[0])/cons.phi1Range[2] + 1);
+		numPhi2 = round((cons.phi2Range[1]-cons.phi2Range[0])/cons.phi2Range[2] + 1);
+		numPhi3 = round((cons.phi3Range[1]-cons.phi3Range[0])/cons.phi3Range[2] + 1);
 		cons.numConfigs = numPhi1*numPhi2*numPhi3;
-		
-		cons.useBoltzIntRes = 0;
+		assert(cons.useBoltzIntRes==0); // Not currently supported 
 	}
 	
 	vecs.simpsonCoeffsPhi1.resize(numPhi1);
@@ -124,10 +147,11 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 		{
 			for (int c2=1; c2<vecs.phi2partition.size(); c2++)
 			{				
-				int m_max = round((vecs.phi1partition[c1]-cons.phi1min)/cons.phi1step);
-				int m_min = round((vecs.phi1partition[c1-1]-cons.phi1min)/cons.phi1step);
-				int n_max = round((vecs.phi2partition[c2]-cons.phi2min)/cons.phi2step);
-				int n_min = round((vecs.phi2partition[c2-1]-cons.phi2min)/cons.phi2step);
+				
+				int m_max = round((vecs.phi1partition[c1]-cons.phi1Range[0])/cons.phi1Range[2]);
+				int m_min = round((vecs.phi1partition[c1-1]-cons.phi1Range[0])/cons.phi1Range[2]);
+				int n_max = round((vecs.phi2partition[c2]-cons.phi2Range[0])/cons.phi2Range[2]);
+				int n_min = round((vecs.phi2partition[c2-1]-cons.phi2Range[0])/cons.phi2Range[2]);
 				
 				int m = m_max-m_min;
 				int n = n_max-n_min;
@@ -164,7 +188,6 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 		} 
 	}
 	
-	
 	// Molecule specific parameters (overwrite numConfigs if needed)
 	if (cons.inputFileString == "input_files_EC.txt") {
 		cons.resToZero = 1;
@@ -191,7 +214,7 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	
 	// Simulated annealing parameters
 	cons.vTempInitial = (5000 + 50*cons.KT)/1000.0; // Starting guess
-	cons.vTempFactor = 0.9998;
+	cons.vTempFactor = 0.9999;
 	cons.dihedralStep = 5.0;
 	cons.sigmaStep = 0.002;
 	cons.epsilonStep = 0.001;
@@ -204,58 +227,41 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	
 	cons.sigmaGradFactor = 0.01;
 	
-	
-	// Get filenames from inputFileString
-	ifstream inputNames;
-	cout << "Opening input file " << cons.inputFileString << endl;
-	inputNames.open(cons.inputFileString.c_str());
-
-	inputNames >> cons.xyzFile >> cons.energyFile >> cons.connectFile >> cons.genXyzFileNames;
-	
-	if (!cons.genXyzFileNames)
-		inputNames >> cons.phiCoordFile;	
-	
 	// Read number of atoms, bonds etc. from first section of input file
 	ifstream connectStream;
 	connectStream.open(cons.connectFile.c_str());
 
 	// Read connectivity size
-	for (int sec=0; sec<6; sec++)
+	for (int sec=0; sec<6; sec++) {
 		cons.size[sec] = 0;
+	}
 	
 	string connectLine;
-	int section;
-	while(getline(connectStream, connectLine))
-	{
+	int section = -1;
+	while(getline(connectStream, connectLine)) {
 		if (connectLine.find("atoms") != string::npos)
 			section = 0;
-		else if (connectLine.find("bonds") != string::npos)
-		{
+		else if (connectLine.find("bonds") != string::npos) {
 			assert (section == 0);
 			section = 1;
 		}
-		else if (connectLine.find("angles") != string::npos)
-		{
+		else if (connectLine.find("angles") != string::npos) {
 			assert (section == 1);
 			section = 2;
 		}
-		else if (connectLine.find("dihedrals") != string::npos)
-		{
+		else if (connectLine.find("dihedrals") != string::npos) {
 			assert (section == 2);
 			section = 3;
 		}
-		else if (connectLine.find("impropers") != string::npos)
-		{
+		else if (connectLine.find("impropers") != string::npos) {
 			assert (section == 3);
 			section = 4;
 		}
-		else if (connectLine.find("lj_pair_fit") != string::npos)
-		{
+		else if (connectLine.find("lj_pair_fit") != string::npos) {
 			assert (section == 4);
 			section = 5;
 		}
-		else if (!connectLine.empty())
-		{
+		else if (!connectLine.empty() && section >= 0) {
 			cons.size[section] += 1;
 		}
 	}
@@ -294,25 +300,69 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	return 0;
 }
 
+int process_input_line(string fLine, input_data_struct* inputDefaults, int inputDefaultSize, bool toPrint)
+{
+	for (int l=0; l<inputDefaultSize; l++)
+	{
+		// Search for match
+		char* searchPtr = strstr(fLine.c_str(), (inputDefaults+l)->keyword);
+		
+		if (searchPtr) { // !NULL
+			if (toPrint) {
+				printf("%s %s\n", "Found input file line ", (inputDefaults+l)->keyword);
+			}
+			// Cast as appropriate data types 
+			if ((inputDefaults+l)->dataType == TYPE_INT) {
+				int valueInt;
+				sscanf(fLine.c_str(), "%*s %d", &valueInt);
+				memcpy( (inputDefaults+l)->varPtr, &valueInt, sizeof(int));
+			}
+			else if ((inputDefaults+l)->dataType == TYPE_FLOAT) {
+				double valueFloat;
+				sscanf(fLine.c_str(), "%*s %lf", &valueFloat);
+				memcpy( (inputDefaults+l)->varPtr, &valueFloat, sizeof(double));
+			}
+			else if ((inputDefaults+l)->dataType == TYPE_INT_3VEC) {
+				int value3VecInt[3];
+				sscanf(fLine.c_str(), "%*s %d %d %d", value3VecInt, value3VecInt+1, value3VecInt+2);
+				memcpy( (inputDefaults+l)->varPtr, value3VecInt, sizeof(double)*3);
+			}
+			else if ((inputDefaults+l)->dataType == TYPE_FLOAT_3VEC) {
+				double value3VecFloat[3];
+				sscanf(fLine.c_str(), "%*s %lf %lf %lf", value3VecFloat, value3VecFloat+1, value3VecFloat+2);
+				memcpy( (inputDefaults+l)->varPtr, value3VecFloat, sizeof(double)*3);
+			}
+			else if ((inputDefaults+l)->dataType == TYPE_STRING) {
+				char valueString[WORD_STRING_SIZE];
+				sscanf(fLine.c_str(), "%*s %s", valueString);
+				memcpy( (inputDefaults+l)->varPtr, valueString, sizeof(valueString) );
+			}
+		}
+	}
+	
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	int annealIt, simplexIt, downhillIt; // Number of iterations for sim. annealing, downhill simplex & conj. grad.
 	
-	if (argc > 3)
+	// Initialise data structures
+	constant_struct cons; // Constants 
+	vector_struct vecs;   // Vectors
+	
+	if (argc > 4)
 	{
 		annealIt = atof(argv[1]);
 		simplexIt = atof(argv[2]);
 		downhillIt = atof(argv[3]);
+		cons.inputFileString = argv[4];
 	}
 	else
 	{
 		cout << "Not enough command line arguements!\n\n";
 		return 1;	
 	}
-	
-	// Initialise data structures
-	constant_struct cons; // Constants 
-	vector_struct vecs;   // Vectors
 		
 	read_input_params(cons, vecs);
 	
@@ -549,8 +599,9 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 		toWrite = (iD%cons.downhillWrite == 0);
 		toPrint = (iD%printFreq == 0);
 		
-		if (toPrint)
+		if (toPrint) {
 			cout << "\nIteration: " << iD << endl << endl;
+		}
 
 		// Sort errors, determine max, min and write best
 		error_sort(cons.simplexSize, simplexErrors, errorRankToRow);
@@ -763,6 +814,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> in
 
 int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int gradientIt)
 {
+	int printFreq = 100; // Print every printFreq steps
 	cout << "\nPerforming " << gradientIt << " conjugate gradient iteraitons\n\n";
 	
 	// Gradient and conjugate direction vectors
@@ -819,21 +871,22 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 	// Do modified conjugate gradient steps -----------------------------------------------------------------------------
 	for (int iG=0; iG < gradientIt; iG++)
 	{
+		bool toPrint = (iG%printFreq == 0);
 		
 		// Get gradient corresponding to x_n, write to gradVectorNew
 		compute_gradient_F(cons, vecs, initialParams, currentParams, gradVectorNew);	
 		
-		cout << "\nNew grad: ";
-		for (int row=0; row<(cons.numTotalParams); row++)
-			cout << std::setprecision(8) << std::setw(11) << gradVectorNew[row] << " ";
-		cout << endl << endl;
-
+		if (toPrint) {
+			cout << "\nNew grad: ";
+			for (int row=0; row<(cons.numTotalParams); row++)
+				cout << std::setprecision(8) << std::setw(11) << gradVectorNew[row] << " ";
+			cout << endl << endl;
+		}
 		
 		// Calculate dot-products needed for beta and theta coefficients
 		double dotProd1 = 0.0, dotProd2 = 0.0, dotProd3 = 0.0;
 		
-		for (int row=0; row<(cons.numTotalParams); row++)
-		{
+		for (int row=0; row<(cons.numTotalParams); row++) {
 			dotProd1 += gradVectorNew[row]*(gradVectorNew[row]-gradVector[row]);
 			dotProd2 += gradVector[row]*gradVector[row];
 			dotProd3 += gradVectorNew[row]*cgVector[row];
@@ -884,117 +937,77 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 		// Overwrite curent parameters
 		previousF = currentF;
 		cgStream << currentF << endl;
-		cout << "Updating parameters, F = " << currentF << endl;
 		
-		for (int col=0; col<(cons.numTotalParams); col++)
-		{
-			currentParams[col] = tempParams[col];
-			cout << std::setprecision(8) << std::setw(11)  << currentParams[col] << " ";
-		}	
-		cout << endl;
+		if (toPrint) {
+			cout << "Updating parameters, F = " << currentF << endl;
+			for (int col=0; col<(cons.numTotalParams); col++) {
+				currentParams[col] = tempParams[col];
+				cout << std::setprecision(8) << std::setw(11)  << currentParams[col] << " ";
+			}	
+			cout << endl;
+		}
+	
 	}		
 	
 	return 0;
 } 
-
-// Steepest descent function is not maintained
-int steepest_descent(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int gradientIt)
-{
-	vector<double> gradVector(cons.numTotalParams);
-	vector<double> tempParams(cons.numTotalParams);
-	long double currentF;
-	long double previousF = error_from_trial_point(cons, initialParams, currentParams, 0, vecs, 0);
-	
-	for (int iG=0; iG < gradientIt; iG++)
-	{		
-		// Get gradient corresponding to current parameters
-		compute_gradient_F(cons, vecs, initialParams, currentParams, gradVector);	
-		
-		cout << "\nGrad: ";
-		for (int row=0; row<cons.numTotalParams; row++)
-			cout << std::setw(8) << gradVector[row] << " ";
-		cout << endl << endl;
-		
-		// Get ||g||^2
-		double gradMag = 0.0;
-		for (int row=0; row<cons.numTotalParams; row++)
-			gradMag += gradVector[row]*gradVector[row];
-		
-		// Update parameters using a backtracking line search
-		double alpha = 0.1, tau = 0.5, delta = -1.0;
-		int n = 0, maxN = 20;
-		
-		while ( (n<=maxN) && (delta < 0.0) )
-		{
-			for (int col=0; col<cons.numTotalParams; col++)
-			{
-				tempParams[col] = currentParams[col] - alpha*gradVector[col];
-				//cout << tempParams[col] << " ";
-			}
-			//cout << endl;
-			
-			currentF = error_from_trial_point(cons, initialParams, tempParams, 0, vecs, 0);
-			
-			delta = previousF - currentF; // should be >= 0 to continue	
-			//cout << n << ": previousF " << std::setw(12) <<  previousF << "  currentF " << std::setw(12) << currentF;
-			//cout << "  alpha " << alpha << endl;
-			
-			alpha *= tau;
-			n++;
-		}
-		
-		// Overwrite curent parameters
-		previousF = currentF;
-		cout << "Updating parameters, F = " << currentF << endl;
-		
-		for (int col=0; col<cons.numTotalParams; col++)
-		{
-			currentParams[col] = tempParams[col];
-			cout << std::setw(10) << currentParams[col] << " ";
-		}	
-		cout << endl;
-	}
-	
-	return 0;	
-}
 
 int xyz_files_read(constant_struct cons, vector_struct &vecs)
 {
 	ifstream xyzStream;
 	
 	// Loop over full (usually 360 degree) range at specificed step size
-	if (cons.genXyzFileNames)
-	{
+	if (cons.genXyzFileNames) {
 		int fileRow=0, f=0;
+		double phi3Min, phi3Max, phi3Step;
 		
-		if (cons.phiDim == 2)
+		if (cons.phiDim == 2){ 			
+			// Set phi3 range so inner loop executed once
+			cons.phi3Range[0] = 0.0; 
+			cons.phi3Range[1] = 360.0;
+			cons.phi3Range[2] = 10.0;
+			phi3Min = 180.0; // Could be anything 0<x<360
+			phi3Max = 180.0;
+			phi3Step = 10.0; // anything >0 will work
+		}
+		else if (cons.phiDim == 3) {
+			phi3Min = cons.phi3Range[0];
+			phi3Max = cons.phi3Range[1];
+			phi3Step = cons.phi3Range[2];
+		}
+			
+		for (int d1=cons.phi1Range[0]; d1<=cons.phi1Range[1]; d1 = d1+cons.phi1Range[2])
 		{
-			for (int d1 = cons.phi1min; d1 <= cons.phi1max; d1 = d1 + cons.phi1step)
+			for (int d2=cons.phi2Range[0]; d2<=cons.phi2Range[1]; d2 = d2+cons.phi2Range[2])
 			{
-				for (int d2 = cons.phi2min; d2 <= cons.phi2max; d2 = d2 + cons.phi2step)
+				for (int d3=phi3Min; d3<=phi3Max; d3 = d3+phi3Step)
 				{
 					// Determine weighting to account for double counting of edge points
 					// This assumes phi2 goes from 0->360, so the 0/360 is double counted
-					if ((int(cons.phi2min) == 0) && (int(cons.phi2max) == 360))
-					{
-						// 0.25 for corners
-						if ( ((d1 == 0) || (d1 == cons.phi1max)) && ((d2 == 0) || (d2 == cons.phi2max)) )
-						{
+					if (cons.weightPhiEdges) {
+					
+						int numBoundaries = ((d1 == cons.phi1Range[0]) || (d1 == cons.phi1Range[1])) + 
+							((d2 == cons.phi2Range[0]) || (d2 == cons.phi2Range[1])) + 
+								((d3 == cons.phi3Range[0]) || (d3 == cons.phi3Range[1]));
+					
+						// 0.125 for vertices (3D)
+						if (numBoundaries==3) {
+							vecs.energyWeighting[f] = 0.125;
+						}
+						// 0.25 for edges (3D) corners (2D)
+						else if (numBoundaries==2) {
 							vecs.energyWeighting[f] = 0.25;
 						}
-						// 0.5 for edges
-						else if ( (d1 == 0) || (d1 == cons.phi1max) || (d2 == 0) || (d2 == cons.phi2max) )
-						{
+						// 0.5 for faces (3D) or edges (2D)
+						else if (numBoundaries==1) {
 							vecs.energyWeighting[f] = 0.5;
 						}
 						// 1.0 for central points
-						else
-						{
+						else {
 							vecs.energyWeighting[f] = 1.0;	
 						}
 					}
-					else
-					{
+					else {
 						vecs.energyWeighting[f] = 1.0;	
 					}
 					//cout << "d1, d2, weighting: " << d1 << ", " << d2 << ", " << vecs.energyWeighting[f] << endl;
@@ -1003,88 +1016,19 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs)
 					bool file_open = 1;
 					int ts = 0;
 			
-					string tsStrPrev;
-			
-					// This method iterates over the -###.xyz suffix to find the last step in a geometry optimisation
-					// Only needed if geometries are taken from NWChem optimisation, which they probably shouldn't
-					while (file_open == 1)
-					{
-						// Generate file name
-						string d1Str = std::to_string(d1);
-						string d2Str = std::to_string(d2);
-						string tsStr = std::to_string(ts);
-				
-						// time-step code is 3-digits
-						if (ts < 10)
-							tsStr = "00" + tsStr;
-						else if (ts < 100)
-							tsStr = "0" + tsStr;
-						else if (ts > 999)
-							cout << "Warning: timestep has 4 digits (undefined behaviour)\n";
-						
-						// Generate file name		
-						string fullFileName = cons.xyzFile + d1Str + "_" + d2Str + "-" + tsStr + ".xyz";
-
-						//cout << "Opening xyz file " << fullFileName << endl;
-				
-						xyzStream.open(fullFileName.c_str());
-				
-						// Once we cannot open the file, we read data from the previous file
-						if (!xyzStream.is_open())
-						{
-							file_open = 0;
-							xyzStream.close();
-							// Get previous file name
-							fullFileName = cons.xyzFile + d1Str + "_" + d2Str + "-" + tsStrPrev + ".xyz";
-							xyzStream.open(fullFileName.c_str());
-
-							// Ignore first 2 lines and atom name (as per XYZ format)
-							int line1;
-							string line2, atom;
-							xyzStream >> line1 >> line2;
+					string tsStrPrev, fullFileName;
 					
-							for (int a = 0; a < cons.size[0]; a++)
-							{
-								xyzStream >> atom >> vecs.xyzData[fileRow*3] >> vecs.xyzData[fileRow*3 + 1] >> vecs.xyzData[fileRow*3 + 2];
-								//cout << vecs.xyzData[fileRow*3] << " " << vecs.xyzData[fileRow*3+1];
-								//cout << " " << vecs.xyzData[fileRow*3+2] << endl;
-								fileRow++; // Move onto next atom
-						
-							}
-						}
-						tsStrPrev = tsStr;
-						xyzStream.close();
-						ts++;	
-					}	
-				}
-			}
-		}
-		else if (cons.phiDim == 3)
-		{
-			for (int d1 = cons.phi1min; d1 <= cons.phi1max; d1 = d1 + cons.phi1step)
-			{
-				for (int d2 = cons.phi2min; d2 <= cons.phi2max; d2 = d2 + cons.phi2step)
-				{
-					for (int d3 = cons.phi3min; d3 <= cons.phi3max; d3 = d3 + cons.phi3step)
-					{	
-						bool file_open = 1;
-						int ts = 0;
-						
-						// Here weightings are always set to 1.0 - assumes there are no duplicate geometries
-						vecs.energyWeighting[f] = 1.0;
-						f++;
+					string d1Str = std::to_string(d1);
+					string d2Str = std::to_string(d2);
+					string d3Str = std::to_string(d3);
 			
-						string tsStrPrev;
-			
-						// This method iterates over the -###.xyz suffix to find the last step in a geometry optimisation. Only needed if geometries are taken from NWChem optimisation
-						while (file_open == 1)
-						{
+					if (cons.useNWsuffix) {
+						// This method iterates over the -###.xyz suffix to find the last step in a geometry optimisation
+						// Only needed if geometries are taken from NWChem optimisation, which they probably shouldn't
+						while (file_open == 1) {
 							// Generate file name
-							string d1Str = std::to_string(d1);
-							string d2Str = std::to_string(d2);
-							string d3Str = std::to_string(d3);
 							string tsStr = std::to_string(ts);
-				
+							
 							// time-step code is 3-digits
 							if (ts < 10)
 								tsStr = "00" + tsStr;
@@ -1094,45 +1038,55 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs)
 								cout << "Warning: timestep has 4 digits (undefined behaviour)\n";
 						
 							// Generate file name		
-							string fullFileName = cons.xyzFile + d1Str + "_" + d2Str + "_" + d3Str + "-" + tsStr + ".xyz";
-				
-							// Open file
-					
-							//cout << "Opening " << fileName << endl;
-				
-							xyzStream.open(fullFileName);
+							if (cons.phiDim==3) {
+								fullFileName = vecs.xyzFileList[0] + d1Str + "_" + d2Str + "_" + d3Str + "-" + tsStr + ".xyz";
+							}
+							else {
+								fullFileName = vecs.xyzFileList[0] + d1Str + "_" + d2Str + "-" + tsStr + ".xyz";
+							}
+							xyzStream.open(fullFileName.c_str());
 				
 							// Once we cannot open the file, we read data from the previous file
-							if (!xyzStream.is_open())
-							{
+							if (!xyzStream.is_open()) {
 								file_open = 0;
-								xyzStream.close();
 								// Get previous file name
-								fullFileName = cons.xyzFile + d1Str + "_" + d2Str + "_" + d3Str + "-" + tsStrPrev + ".xyz";
-								xyzStream.open(fullFileName.c_str());
-								// Read data
-								//cout << "Reading file " << f << ", " << fullFileName << endl;
-								// Ignore first 2 lines and atom name (as per XYZ format)
-								int line1;
-								string line2, atom;
-								xyzStream >> line1 >> line2;
-					
-								for (int a = 0; a < cons.size[0]; a++)
-								{
-									xyzStream >> atom >> vecs.xyzData[fileRow*3] >> vecs.xyzData[fileRow*3 + 1] >> vecs.xyzData[fileRow*3 + 2];
-									//cout << vecs.xyzData[fileRow*3] << " " << vecs.xyzData[fileRow*3+1];
-									//cout << " " << vecs.xyzData[fileRow*3+2] << endl;
-									fileRow++; // Move onto next atom
-						
+								if (cons.phiDim==3) {
+									fullFileName = vecs.xyzFileList[0] + d1Str + "_" + d2Str + "_" + d3Str + "-" + tsStrPrev + ".xyz";
 								}
+								else {
+									fullFileName = vecs.xyzFileList[0] + d1Str + "_" + d2Str + "-" + tsStrPrev + ".xyz";
+								}
+								
 							}
 							tsStrPrev = tsStr;
 							xyzStream.close();
 							ts++;
-						
-						}		
+						}	
+					}					
+					else {
+						if (cons.phiDim==3) {
+							fullFileName = vecs.xyzFileList[0] + d1Str + "_" + d2Str + "_" + d3Str + ".xyz";
+						}
+						else {
+							fullFileName = vecs.xyzFileList[0] + d1Str + "_" + d2Str + ".xyz";
+						}
 					}	
-				}
+					
+					cout << "Opening xyz file " << fullFileName << endl;
+					xyzStream.open(fullFileName.c_str());
+
+					// Read but ignore first two lines
+					string numAtoms, atom, xyzHeader;
+					std::getline(xyzStream, numAtoms);
+					std::getline(xyzStream, xyzHeader);
+					
+					for (int a=0; a<cons.size[0]; a++) {
+						xyzStream >> atom >> vecs.xyzData[fileRow*3] >> vecs.xyzData[fileRow*3 + 1] >> vecs.xyzData[fileRow*3 + 2];
+						//cout << vecs.xyzData[fileRow*3] << " " << vecs.xyzData[fileRow*3+1];
+						//cout << " " << vecs.xyzData[fileRow*3+2] << endl;
+						fileRow++; // Move onto next atom	
+					}
+				}		
 			}
 		}
 	}
@@ -1141,9 +1095,9 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs)
 		assert(cons.phiDim == 2);
 		
 		ifstream phiPairStream, xyzStream;
-		cout << "Reading phi pairs from " << cons.phiCoordFile << endl;
+		cout << "Reading phi pairs from " << vecs.xyzFileList[0] << endl;
 			
-		phiPairStream.open(cons.phiCoordFile.c_str());
+		phiPairStream.open(vecs.xyzFileList[0].c_str());
 		if(!phiPairStream.is_open())
 		{
 			cout << "Error, phi pair file cannot be opened!" << endl;
@@ -1168,7 +1122,7 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs)
 			
 			// Generate xyz filename
 			// This method assumes the files end with "-000.xyz"
-			string fileName = cons.xyzFile + phi1Str + "_" + phi2Str + "-000" + ".xyz";
+			string fileName = vecs.xyzFileList[0] + phi1Str + "_" + phi2Str + "-000" + ".xyz";
 			
 			//cout << "Opening xyz file: " << fileName << endl;
 			
@@ -1398,40 +1352,44 @@ int connectivity_process(constant_struct cons, vector_struct &vecs)
 				if ( (vecs.ljPairFitData[p*cons.pairDataSize] == a1) && (vecs.ljPairFitData[p*cons.pairDataSize + 1] == a2) )
 					toFit = 1;		
 			}
-
+			
 			assert(cons.gromacsCombRule == 2);
-			double sigma = 0.5*(vecs.atomData[i*cons.atomDataSize+2]+vecs.atomData[j*cons.atomDataSize+2]);
+			
+			
+			double sigma_i = vecs.atomData[i*cons.atomDataSize+2];
+			double sigma_j = vecs.atomData[j*cons.atomDataSize+2];
+			
+			// Apply sigma sclaing factor for 1-4 interactions	
+			if (vecs.bondSepMat[m1] == 3) {
+				sigma_i = sigma_i > cons.sigma14factorCutoff ? 
+					sigma_i*cons.sigma14factor : sigma_i;
+				sigma_j = sigma_j > cons.sigma14factorCutoff ? 
+					sigma_j*cons.sigma14factor : sigma_j;
+			}	
+			
+			double sigma = 0.5*(sigma_i+ sigma_j);
 			double epsilon = sqrt(vecs.atomData[i*cons.atomDataSize+3]*vecs.atomData[j*cons.atomDataSize+3]);
 			double QQ = vecs.atomData[i*cons.atomDataSize+1]*vecs.atomData[j*cons.atomDataSize+1];
 			
 			// Excluded interactions
-			if (vecs.bondSepMat[m1] <= cons.nrexcl)
-			{
+			if (vecs.bondSepMat[m1] <= cons.nrexcl) {
 				vecs.sigmaMatrix[m1] = 0.0;
 				vecs.epsilonMatrix[m1] = 0.0;
 				vecs.qqMatrix[m1] = 0.0;
 			}
-			// 1-4 Interactions (can be removed by setting scale14LJ & scale14QQ to zero)
-			if (vecs.bondSepMat[m1] == 3)
-			{
-				if (sigma > cons.sigma14factorCutoff) {
-					vecs.sigmaMatrix[m1] = sigma*cons.sigma14factor;
-				}
-				else {
-					vecs.sigmaMatrix[m1] = sigma;
-				}
+			// 1-4 Interactions with scaling factor
+			if (vecs.bondSepMat[m1] == 3) {
+				vecs.sigmaMatrix[m1] = sigma;
 				vecs.epsilonMatrix[m1] = cons.scale14LJ*epsilon;
 				vecs.qqMatrix[m1] = cons.scale14QQ*QQ;
 			}
 			// Full interactions
-			if (vecs.bondSepMat[m1] > cons.nrexcl)
-			{
+			if (vecs.bondSepMat[m1] > cons.nrexcl) {
 				vecs.sigmaMatrix[m1] = sigma;
 				vecs.epsilonMatrix[m1] = epsilon;
 				vecs.qqMatrix[m1] = QQ;
 			}
-			if (toFit == 1)
-			{
+			if (toFit == 1) {
 				//Remove LJ interaction for pairs being fit (usually 1-5 pairs)
 				vecs.epsilonMatrix[m1] = 0.0;
 			}	
@@ -1692,8 +1650,7 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs)
 					rIJ[n] = coords[atomJC*3 + n] - coords[atomIC*3 + n];
 				
 				// Convert A to nm
-				if (cons.xyzAngstroms)
-				{
+				if (cons.xyzAngstroms) {
 					for (int n=0; n<3; n++)
 						rIJ[n] *= 0.1;
 				}
@@ -1766,14 +1723,12 @@ int energy_read(constant_struct cons, vector_struct &vecs)
 	ifstream energyStream;
 	energyStream.open(cons.energyFile.c_str());
 	
-	if(!energyStream.is_open())
-	{
+	if(!energyStream.is_open()) {
 		cout << "ERROR: Energy file was not opened!\n";
 		return 1;
 	}
 	
-	for (int f=0; f<cons.numConfigs; f++)
-	{
+	for (int f=0; f<cons.numConfigs; f++) {
 		energyStream >> vecs.energyData[f];
 		vecs.energyWeighting[f] *= exp(-vecs.energyData[f]/cons.KT); // Apply Boltzmann weighting 
 		//cout << vecs.energyData[f] << endl;
@@ -1793,10 +1748,10 @@ int energy_read(constant_struct cons, vector_struct &vecs)
 		{
 			for (int c2=1; c2<vecs.phi2partition.size(); c2++)
 			{				
-				int m_max = round((vecs.phi1partition[c1]-cons.phi1min)/cons.phi1step);
-				int m_min = round((vecs.phi1partition[c1-1]-cons.phi1min)/cons.phi1step);
-				int n_max = round((vecs.phi2partition[c2]-cons.phi2min)/cons.phi2step);
-				int n_min = round((vecs.phi2partition[c2-1]-cons.phi2min)/cons.phi2step);
+				int m_max = round((vecs.phi1partition[c1]-cons.phi1Range[0])/cons.phi1Range[2]);
+				int m_min = round((vecs.phi1partition[c1-1]-cons.phi1Range[0])/cons.phi1Range[2]);
+				int n_max = round((vecs.phi2partition[c2]-cons.phi2Range[0])/cons.phi2Range[2]);
+				int n_min = round((vecs.phi2partition[c2-1]-cons.phi2Range[0])/cons.phi2Range[2]);
 			
 				for (int i_m = m_min; i_m <= m_max; i_m++)
 				{
@@ -1804,7 +1759,7 @@ int energy_read(constant_struct cons, vector_struct &vecs)
 					{						
 						// Convert (i_m,i_n) to 1D index f, phi1-major order
 					
-						int numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
+						int numPhi2 = round((cons.phi2Range[1]-cons.phi2Range[0])/cons.phi2Range[2] + 1);
 						int f = i_m*numPhi2 + i_n;
 					
 						if (vecs.integrationRule[i_section] == 1) // Simpsons rule
@@ -1818,7 +1773,7 @@ int energy_read(constant_struct cons, vector_struct &vecs)
 				// Rescale sum according to integral formula
 				if (vecs.integrationRule[i_section] == 1) // Simpsons rule
 				{
-					sectionIntegrals[i_section] *= (cons.phi1step*cons.phi2step)/9.0;
+					sectionIntegrals[i_section] *= (cons.phi1Range[2]*cons.phi2Range[2])/9.0;
 				}
 				// Add integral for this section to relevant conformer
 				vecs.confIntegralsDFT[vecs.partitionMap[i_section]-1] += sectionIntegrals[i_section];
@@ -1839,7 +1794,7 @@ int energy_read(constant_struct cons, vector_struct &vecs)
 int define_initial_simplex(constant_struct cons, vector<double> initialParams, vector<double> &simplex)
 {
 	int ssM1 = cons.numTotalParams; // Width of simplex, i.e. total number of params
-	const double factorLJ = -0.001;
+	const double factorLJ = 0.01;
 	const double dihedralStep = 0.5;
 	
 	// Fill in simplex, add perturbation to diagonal elements
@@ -2044,17 +1999,17 @@ int compute_boltzmann_integrals(constant_struct cons, vector_struct vecs, vector
 	{
 		for (int c2=1; c2<vecs.phi2partition.size(); c2++)
 		{				
-			int m_max = round((vecs.phi1partition[c1]-cons.phi1min)/cons.phi1step);
-			int m_min = round((vecs.phi1partition[c1-1]-cons.phi1min)/cons.phi1step);
-			int n_max = round((vecs.phi2partition[c2]-cons.phi2min)/cons.phi2step);
-			int n_min = round((vecs.phi2partition[c2-1]-cons.phi2min)/cons.phi2step);
+			int m_max = round((vecs.phi1partition[c1]-cons.phi1Range[0])/cons.phi1Range[2]);
+			int m_min = round((vecs.phi1partition[c1-1]-cons.phi1Range[0])/cons.phi1Range[2]);
+			int n_max = round((vecs.phi2partition[c2]-cons.phi2Range[0])/cons.phi2Range[2]);
+			int n_min = round((vecs.phi2partition[c2-1]-cons.phi2Range[0])/cons.phi2Range[2]);
 			
 			for (int i_m = m_min; i_m <= m_max; i_m++)
 			{
 				for (int i_n = n_min; i_n <= n_max; i_n++)
 				{						
 					// Convert (i_m,i_n) to 1D index f, phi1-major order					
-					int numPhi2 = round((cons.phi2max-cons.phi2min)/cons.phi2step + 1);
+					int numPhi2 = round((cons.phi2Range[1]-cons.phi2Range[0])/cons.phi2Range[2] + 1);
 					int f = i_m*numPhi2 + i_n;
 					
 					if (vecs.integrationRule[i_section] == 1) // Simpsons rule
@@ -2068,7 +2023,7 @@ int compute_boltzmann_integrals(constant_struct cons, vector_struct vecs, vector
 			// Rescale sum according to integral formula
 			if (vecs.integrationRule[i_section] == 1) // Simpsons rule
 			{
-				sectionIntegrals[i_section] *= (cons.phi1step*cons.phi2step)/9.0;
+				sectionIntegrals[i_section] *= (cons.phi1Range[2]*cons.phi2Range[2])/9.0;
 			}
 			// Map integral for this section to relevant conformer
 			confIntegralsMD[vecs.partitionMap[i_section]-1] += sectionIntegrals[i_section];
@@ -2218,8 +2173,8 @@ int compute_gradient_F(constant_struct cons, vector_struct vecs, vector<double> 
 }
 
 int error_sort(int simplexSize, vector<long double> simplexErrors, vector<int> &errorRankToRow)
-{	
-	// Bubble sort
+{
+	// Bubble sort (should be good for nearly sorted lists)
 	bool swapPerformed = 1;
 	while (swapPerformed == 1)
 	{
@@ -2240,3 +2195,63 @@ int error_sort(int simplexSize, vector<long double> simplexErrors, vector<int> &
 	return 0;
 }
 
+/* Steepest descent function is not maintained
+int steepest_descent(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int gradientIt)
+{
+	vector<double> gradVector(cons.numTotalParams);
+	vector<double> tempParams(cons.numTotalParams);
+	long double currentF;
+	long double previousF = error_from_trial_point(cons, initialParams, currentParams, 0, vecs, 0);
+	
+	for (int iG=0; iG < gradientIt; iG++)
+	{		
+		// Get gradient corresponding to current parameters
+		compute_gradient_F(cons, vecs, initialParams, currentParams, gradVector);	
+		
+		cout << "\nGrad: ";
+		for (int row=0; row<cons.numTotalParams; row++)
+			cout << std::setw(8) << gradVector[row] << " ";
+		cout << endl << endl;
+		
+		// Get ||g||^2
+		double gradMag = 0.0;
+		for (int row=0; row<cons.numTotalParams; row++)
+			gradMag += gradVector[row]*gradVector[row];
+		
+		// Update parameters using a backtracking line search
+		double alpha = 0.1, tau = 0.5, delta = -1.0;
+		int n = 0, maxN = 20;
+		
+		while ( (n<=maxN) && (delta < 0.0) )
+		{
+			for (int col=0; col<cons.numTotalParams; col++)
+			{
+				tempParams[col] = currentParams[col] - alpha*gradVector[col];
+				//cout << tempParams[col] << " ";
+			}
+			//cout << endl;
+			
+			currentF = error_from_trial_point(cons, initialParams, tempParams, 0, vecs, 0);
+			
+			delta = previousF - currentF; // should be >= 0 to continue	
+			//cout << n << ": previousF " << std::setw(12) <<  previousF << "  currentF " << std::setw(12) << currentF;
+			//cout << "  alpha " << alpha << endl;
+			
+			alpha *= tau;
+			n++;
+		}
+		
+		// Overwrite curent parameters
+		previousF = currentF;
+		cout << "Updating parameters, F = " << currentF << endl;
+		
+		for (int col=0; col<cons.numTotalParams; col++)
+		{
+			currentParams[col] = tempParams[col];
+			cout << std::setw(10) << currentParams[col] << " ";
+		}	
+		cout << endl;
+	}
+	
+	return 0;	
+} */

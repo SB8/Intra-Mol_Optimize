@@ -1,4 +1,41 @@
 // Header file for DME dihedral fitter
+#include <cmath>
+#include <stdio.h>
+#include <stdlib.h> 
+#include <time.h> 
+#include <string>
+#include <iostream>
+#include <fstream>
+#include <iomanip>
+#include <assert.h>
+#include <random>
+#include <vector>
+#include <algorithm>
+
+using std::cout;
+using std::endl;
+using std::string;
+using std::vector;
+using std::ifstream;
+using std::ifstream;
+using std::ofstream;
+
+#define TYPE_INT 0
+#define TYPE_FLOAT 1
+#define TYPE_INT_3VEC 2
+#define TYPE_FLOAT_3VEC 3
+#define TYPE_STRING 4
+
+#define WORD_STRING_SIZE 64
+
+typedef struct {
+	
+    char keyword[WORD_STRING_SIZE];
+	int dataType;
+	void* varPtr;
+	char defString[WORD_STRING_SIZE];
+	
+} input_data_struct;
 
 struct constant_struct
 {
@@ -6,11 +43,11 @@ struct constant_struct
 	
 	bool xyzAngstroms;
 	bool genXyzFileNames;
-	string inputFileString;	
+	string inputFileString;
+	string parameterFile;	
 	string xyzFile;
 	string energyFile;
 	string connectFile;
-	string phiCoordFile;
 	
 	int nrexcl;
 	int gromacsCombRule;
@@ -24,16 +61,13 @@ struct constant_struct
 	int numConfigs;
   
 	int phiDim;
-	double phi1min;
-	double phi1max;
-	double phi1step;
-	double phi2min;
-	double phi2max;
-	double phi2step;
-	double phi3min;
-	double phi3max;
-	double phi3step;
-  
+	double phi1Range[3];
+	double phi2Range[3];
+	double phi3Range[3];
+	int numPhiSurfaces;
+	int useNWsuffix;	
+	int weightPhiEdges;
+
 	int annealWrite;
 	int downhillWrite;
 	int atomDataSize;
@@ -79,6 +113,8 @@ struct vector_struct
 	vector<double> phi1partition;
 	vector<double> phi2partition;
 	
+	vector<string> xyzFileList;
+	
 	vector<int> partitionMap;
 	vector<int> integrationRule;
 	vector<double> simpsonCoeffsPhi1;
@@ -109,7 +145,8 @@ struct vector_struct
 };
 
 // Function prototypes
-int read_input_params(constant_struct &cons, vector_struct &vecs);
+int read_input_params(constant_struct& cons, vector_struct& vecs);
+int process_input_line(string fLine, input_data_struct* inputDefaults, int inputDefaultSize, bool toPrint);
 int xyz_files_read(constant_struct cons, vector_struct &vecs);
 int connectivity_read(constant_struct cons, vector_struct &vecs);
 int connectivity_process(constant_struct cons, vector_struct &vecs);

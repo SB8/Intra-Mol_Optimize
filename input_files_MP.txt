@@ -1,0 +1,4 @@
+xyz_files/MP_CG_OPLS-14_0.9sigmaC1,4_XYZ/MP_XYZ_EM_
+energy_profiles/MP/MP_2D-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+connectivity_files/connectivity_MP_no-pair-fit.txt
+1
