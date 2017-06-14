@@ -1,7 +1,7 @@
 
 #include "IMO_header.h"
 
-int read_input_params(constant_struct &cons, vector_struct &vecs)
+int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_struct &initialParams)
 {
 	// Get filenames from inputFileString
 	ifstream inputNames;
@@ -11,10 +11,6 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	// Get parameter file name
 	inputNames >> cons.parameterFile;
 	cout << "Reading parameters from " << cons.parameterFile << endl;
-
-	// Variable/input data
-	//FILE *ifp;
-	//ifp = fopen(cons.parameterFile.c_str(), "r");
 	
 	ifstream paramStream;
 	paramStream.open(cons.parameterFile.c_str());
@@ -36,7 +32,8 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 		{"use_nwchem_suffix", TYPE_INT, &(cons.useNWsuffix), "1"},
 		{"weight_edges_periodically", TYPE_INT, &(cons.weightPhiEdges), "1"},
 		{"sigma_1_4_factor", TYPE_FLOAT, &(cons.sigma14factor), "1.0"},
-		{"sigma_1_4_factor_cutoff", TYPE_FLOAT, &(cons.sigma14factorCutoff), "0.3"}
+		{"sigma_1_4_mod_cutoff", TYPE_FLOAT, &(cons.sigma14factorCutoff), "0.3"},
+		{"use_adaptive_nelder_mead", TYPE_INT, &(cons.useAdaptiveNelderMead), "1"}
 	};
 	
 	int inputDefaultSize = sizeof(inputDefaults)/sizeof(inputDefaults[0]);
@@ -58,32 +55,12 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 		fLine[0] = '\0';
     }
 	
-	// Read other files
-	inputNames >> cons.energyFile >> cons.connectFile;
-	cout << "Energy file: " << cons.energyFile << endl;
-	cout << "Connectivity file: " << cons.connectFile << endl;
-	
-	// xyz files
-	if (cons.genXyzFileNames) {
-		vecs.xyzFileList.resize(cons.numPhiSurfaces);
-		for (int xf=0; xf<cons.numPhiSurfaces; xf++) {
-			inputNames >> vecs.xyzFileList[xf];
-			cout << "XYZ file: " << vecs.xyzFileList[xf] << endl;
-		}
-	}
-	else {
-		vecs.xyzFileList.resize(1);
-		inputNames >> vecs.xyzFileList[0];
-		cout << "XYZ file: " << vecs.xyzFileList[0] << endl;
-		cons.numPhiSurfaces = 1;
-	}
-	
 	cons.pi = acosl(-1.0L);
 		
 	cons.xyzAngstroms = true;
 
 	if (cons.sigma14factor != 1.0) { 
-		cout << "Warning: Sigma-1,4 = " << cons.sigma14factor << ". Press any key to continue.";
+		cout << "Warning: Sigma-1,4 factor = " << cons.sigma14factor << ". Press any key to continue.";
 		std::cin.ignore();
 	}
 	
@@ -98,21 +75,25 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 	cons.resToZero = 0;
 	cons.dihedralK = 0.0;
 	
+	// 
 	int numPhi1 = 0, numPhi2 = 0, numPhi3 = 0;
 	
-	if (cons.phiDim == 2) {		
+	if (cons.phiDim == 2 && cons.genXyzFileNames) {
 		numPhi1 = round((cons.phi1Range[1]-cons.phi1Range[0])/cons.phi1Range[2] + 1);
 		numPhi2 = round((cons.phi2Range[1]-cons.phi2Range[0])/cons.phi2Range[2] + 1);
 		numPhi3 = 0;
 		cons.numConfigs = numPhi1*numPhi2;		
 	}
-	else if (cons.phiDim == 3) {
+	else if (cons.phiDim == 3 && cons.genXyzFileNames) {
 		numPhi1 = round((cons.phi1Range[1]-cons.phi1Range[0])/cons.phi1Range[2] + 1);
 		numPhi2 = round((cons.phi2Range[1]-cons.phi2Range[0])/cons.phi2Range[2] + 1);
 		numPhi3 = round((cons.phi3Range[1]-cons.phi3Range[0])/cons.phi3Range[2] + 1);
 		cons.numConfigs = numPhi1*numPhi2*numPhi3;
 		assert(cons.useBoltzIntRes==0); // Not currently supported 
 	}
+	else if (!cons.genXyzFileNames) {	
+	}
+	cout << "Num configs per surface = " << cons.numConfigs << endl;
 	
 	vecs.simpsonCoeffsPhi1.resize(numPhi1);
 	vecs.simpsonCoeffsPhi2.resize(numPhi2);
@@ -200,114 +181,149 @@ int read_input_params(constant_struct &cons, vector_struct &vecs)
 		cons.dihedralK = 1.0E-6;
 	}
 	
-	cons.annealWrite = 100;	// Frequency of writing lowest error to file
-	cons.downhillWrite = 10;
-	
+	// Connectivity data sizes
 	cons.atomDataSize = 4;
 	cons.bondDataSize = 4;
 	cons.angleDataSize = 5;
 	cons.dihedralDataSize = 11;
 	cons.improperDataSize = 7;
-	cons.pairDataSize = 4;
+	cons.pairDataSize = 5;
 	
-	cons.numDihedralFit = 0;
+	if (cons.genXyzFileNames) {
+		vecs.connectFileList.resize(cons.numPhiSurfaces);
+		vecs.xyzFileList.resize(cons.numPhiSurfaces);
+		vecs.energyFileList.resize(cons.numPhiSurfaces);
+	}
+	else {
+		assert(cons.numPhiSurfaces == 1);
+		vecs.connectFileList.resize(1);
+		vecs.xyzFileList.resize(1);
+		vecs.energyFileList.resize(1);
+	}
+	
+	vecs.dihedralIndexMapping.resize(512,-1); // Size = max number of dihedrals supported
+	vecs.pairIndexMapping.resize(512,-1);
+	
+	// Resize outer (i_s) loop of vector<vector> types
+	vecs.xyzData.resize(cons.numPhiSurfaces);	
+	vecs.energyData.resize(cons.numPhiSurfaces);	
+	vecs.energyWeighting.resize(cons.numPhiSurfaces);	
+	vecs.uConst.resize(cons.numPhiSurfaces);	
+	
+	vecs.molSize.resize(cons.numPhiSurfaces);	
+	vecs.atomData.resize(cons.numPhiSurfaces);	
+	vecs.bondData.resize(cons.numPhiSurfaces);	
+	vecs.angleData.resize(cons.numPhiSurfaces);	
+	vecs.dihedralData.resize(cons.numPhiSurfaces);	
+	vecs.improperData.resize(cons.numPhiSurfaces);	
+	
+	vecs.pairData.resize(cons.numPhiSurfaces);	
+	
+	vecs.cosPsiData.resize(cons.numPhiSurfaces);	
+	vecs.pairSepData.resize(cons.numPhiSurfaces);	
+
+	vecs.bondSepMat.resize(cons.numPhiSurfaces);	
+	vecs.rijMatrix.resize(cons.numPhiSurfaces);	
+	vecs.sigmaMatrix.resize(cons.numPhiSurfaces);	
+	vecs.epsilonMatrix.resize(cons.numPhiSurfaces);	
+	vecs.qqMatrix.resize(cons.numPhiSurfaces);	
+		
+	for (int i_s=0; i_s<cons.numPhiSurfaces; i_s++) {
+		// Connectivity file
+		inputNames >> vecs.connectFileList[i_s];
+		cout << "Connectivity file set to: " << vecs.connectFileList[i_s] << endl;
+		connectivity_read(cons, vecs, i_s);
+		
+		// Process connectivity data
+		connectivity_process(cons, vecs, i_s);
+		
+		// XYZ files (must be read before energy)
+		inputNames >> vecs.xyzFileList[i_s];
+		cout << "XYZ file set to: " << vecs.xyzFileList[i_s] << endl;
+		xyz_files_read(cons, vecs, i_s);
+
+		// Energy files
+		inputNames >> vecs.energyFileList[i_s];
+		cout << "Energy file set to: " << vecs.energyFileList[i_s] << endl;
+		energy_read(cons, vecs, i_s);
+		
+		// Process constant terms in energy
+		constant_energy_process(cons, vecs, initialParams, i_s);
+	}
+	
+	// Hardcoded params
+	//
+	cons.annealWrite = 100;	// Frequency of writing lowest error to file
+	cons.downhillWrite = 10;
 	
 	// Simulated annealing parameters
 	cons.vTempInitial = (5000 + 50*cons.KT)/1000.0; // Starting guess
 	cons.vTempFactor = 0.9999;
-	cons.dihedralStep = 5.0;
-	cons.sigmaStep = 0.002;
+	cons.dihedralStep = 2.0;
+	cons.sigmaStep = 0.0002;
 	cons.epsilonStep = 0.001;
 	
-	// Default Nelder-Mead parameters (updated in main)
-	cons.nmReflect = 1.0;
-	cons.nmExpand = 2.0;
-	cons.nmContract = 0.8;
-	cons.nmShrink = 0.5;
-	
 	cons.sigmaGradFactor = 0.01;
-	
-	// Read number of atoms, bonds etc. from first section of input file
-	ifstream connectStream;
-	connectStream.open(cons.connectFile.c_str());
-
-	// Read connectivity size
-	for (int sec=0; sec<6; sec++) {
-		cons.size[sec] = 0;
-	}
-	
-	string connectLine;
-	int section = -1;
-	while(getline(connectStream, connectLine)) {
-		if (connectLine.find("atoms") != string::npos)
-			section = 0;
-		else if (connectLine.find("bonds") != string::npos) {
-			assert (section == 0);
-			section = 1;
-		}
-		else if (connectLine.find("angles") != string::npos) {
-			assert (section == 1);
-			section = 2;
-		}
-		else if (connectLine.find("dihedrals") != string::npos) {
-			assert (section == 2);
-			section = 3;
-		}
-		else if (connectLine.find("impropers") != string::npos) {
-			assert (section == 3);
-			section = 4;
-		}
-		else if (connectLine.find("lj_pair_fit") != string::npos) {
-			assert (section == 4);
-			section = 5;
-		}
-		else if (!connectLine.empty() && section >= 0) {
-			cons.size[section] += 1;
-		}
-	}
-	
-	//connectStream >> cons.size[0] >> cons.size[1] >> cons.size[2] >> cons.size[3] >> cons.size[4] >> cons.size[5];
-	for (int sec=0; sec<6; sec++)
-		cout << cons.size[sec] << endl;
-	
-	// Set size of vectors
-	vecs.xyzData.resize(cons.numConfigs*cons.size[0]*3);	
-	vecs.energyData.resize(cons.numConfigs);
-	vecs.energyWeighting.resize(cons.numConfigs);
-	vecs.constantEnergy.resize(cons.numConfigs);
-	
-	vecs.atomData.resize(cons.size[0]*cons.atomDataSize);
-	vecs.bondData.resize(cons.size[1]*cons.bondDataSize);
-	vecs.angleData.resize(cons.size[2]*cons.angleDataSize);
-	vecs.dihedralData.resize(cons.size[3]*cons.dihedralDataSize);
-	
-	if (cons.size[4] != 0)
-		vecs.improperData.resize(cons.size[4]*cons.dihedralDataSize);
-	if (cons.size[5] != 0)
-	{
-		vecs.ljPairFitData.resize(cons.size[5]*cons.pairDataSize);
-		vecs.pairSepData.resize(cons.numConfigs*cons.size[5]);
-	}
-	
-	vecs.bondSepMat.resize(cons.size[0]*cons.size[0]);
-	vecs.rijMatrix.resize(cons.size[0]*cons.size[0]);
-	vecs.sigmaMatrix.resize(cons.size[0]*cons.size[0]);
-	vecs.epsilonMatrix.resize(cons.size[0]*cons.size[0]);
-	vecs.qqMatrix.resize(cons.size[0]*cons.size[0]);
-	
-	vecs.phiPairSpec.resize(cons.phiDim*cons.numConfigs);
-	
+		
 	return 0;
+}
+
+int main(int argc, char *argv[])
+{
+	int annealIt, simplexIt, downhillIt; // Number of iterations for sim. annealing, downhill simplex & conj. grad.
+	
+	// Initialise data structures
+	constant_struct cons; // Constants 
+	vector_struct vecs;   // Vectors
+	fitting_param_struct initialParams;
+	fitting_param_struct currentParams;
+	
+	if (argc > 4) {
+		annealIt = atof(argv[1]);
+		simplexIt = atof(argv[2]);
+		downhillIt = atof(argv[3]);
+		cons.inputFileString = argv[4];
+	}
+	else {
+		cout << "Not enough command line arguments!\n\n";
+		return 1;	
+	}
+	
+	// Read input and setup parameter struct
+	read_input_params(cons, vecs, initialParams);
+	currentParams = initialParams;
+	
+	cons.numTotalParams = currentParams.uShift.size() + currentParams.rbCoeff.size() + currentParams.ljSigma.size()*2;
+	
+	cout << "Starting parameters\n";
+	print_params_console(cons, currentParams);
+	
+	srand(time(NULL));
+	
+	// -------- DO OPTIMISATION ------------------------------------------------------------------------------- 
+	
+	simulated_annealing(cons, vecs, initialParams, currentParams, annealIt);
+	
+	downhill_simplex(cons, vecs, initialParams, currentParams, simplexIt);
+	
+	//conjugate_gradient(cons, vecs, initialParams, currentParams, downhillIt);
+	
+	// ---------------------------------------------------------------------------------------------------------
+	
+	// Write best energy
+	error_from_trial_point(cons, vecs, initialParams, currentParams, 1);
+	
 }
 
 int process_input_line(string fLine, input_data_struct* inputDefaults, int inputDefaultSize, bool toPrint)
 {
-	for (int l=0; l<inputDefaultSize; l++)
-	{
+	for (int l=0; l<inputDefaultSize; l++) {
 		// Search for match
-		char* searchPtr = strstr(fLine.c_str(), (inputDefaults+l)->keyword);
+		string inputType;
+		std::stringstream fLineStream(fLine);
+		fLineStream >> inputType;
 		
-		if (searchPtr) { // !NULL
+		if (!inputType.compare((inputDefaults+l)->keyword)) { // !NULL
 			if (toPrint) {
 				printf("%s %s\n", "Found input file line ", (inputDefaults+l)->keyword);
 			}
@@ -343,132 +359,7 @@ int process_input_line(string fLine, input_data_struct* inputDefaults, int input
 	return 0;
 }
 
-int main(int argc, char *argv[])
-{
-	int annealIt, simplexIt, downhillIt; // Number of iterations for sim. annealing, downhill simplex & conj. grad.
-	
-	// Initialise data structures
-	constant_struct cons; // Constants 
-	vector_struct vecs;   // Vectors
-	
-	if (argc > 4)
-	{
-		annealIt = atof(argv[1]);
-		simplexIt = atof(argv[2]);
-		downhillIt = atof(argv[3]);
-		cons.inputFileString = argv[4];
-	}
-	else
-	{
-		cout << "Not enough command line arguements!\n\n";
-		return 1;	
-	}
-		
-	read_input_params(cons, vecs);
-	
-	srand(time(NULL));
-	
-	// Read xyz files
-	xyz_files_read(cons, vecs);
-		
-	// Read connectivity data
-	connectivity_read(cons, vecs);
-	
-	// Process connectivity data
-	connectivity_process(cons, vecs);
-	
-	// Read energy file
-	int energyRead = energy_read(cons, vecs);	
-	if (energyRead == 1)
-		return 1;
-	
-	// Deterine number of dihedrals to fit, and the starting parameters
-	for (int d = 0; d < cons.size[3]; d++)
-	{
-		if (vecs.dihedralData[d*cons.dihedralDataSize + 4] > cons.numDihedralFit)
-			cons.numDihedralFitUnique = vecs.dihedralData[d*cons.dihedralDataSize + 4];
-		if (vecs.dihedralData[d*cons.dihedralDataSize + 4] > 0)
-			cons.numDihedralFit += 1;
-	}
-	
-	cout << "numDihedralFit = " << cons.numDihedralFit << endl; 
-	cout << "numDihedralFitUnique = " << cons.numDihedralFitUnique << endl;
-	
-	// Determine number of pairs to fit (future feature)
-	cons.numDihedralParams = cons.numDihedralFitUnique*(cons.nRBfit-1) + 1;	// +1 is the constant energy term
-		
-	if (cons.size[5] == 0)
-		cons.numTotalParams = cons.numDihedralParams;
-	else
-		cons.numTotalParams = cons.numDihedralParams + 2;
-	
-	cout << "numTotalParams = " << cons.numTotalParams << endl;
-		
-	vector<double> initialParams(cons.numTotalParams);
-	vector<double> currentParams(cons.numTotalParams);
-	
-	// Set adaptive Nelder-Mead parameters
-	cons.nmReflect = 1.0;
-	cons.nmExpand = 1.0 + 2.0/double(cons.numTotalParams);
-	cons.nmContract = 0.9 - 0.8/double(cons.numTotalParams);
-	cons.nmShrink = 1.0 - 1.0/double(cons.numTotalParams);	
-	
-	cons.simplexSize = cons.numTotalParams + 1;
-	vecs.cosPsiData.resize(cons.numConfigs*cons.numDihedralFit);
-	
-	// Process constant terms in energy
-	int constSuccess = constant_energy_process(cons, vecs);
-	if (constSuccess == 1)
-		return 1;
-
-	// Setup vector of initial parameters
-	// Loop over all dihedrals
-	for (int d = 0; d < cons.size[3]; d++)
-	{
-		// Get dihedral type
-		int dType = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 4]));
-		
-		if (vecs.dihedralData[d*cons.dihedralDataSize + 4] != 0) // If being used in fit
-		{
-			// Loop over coefficients
-			for (int rb=0; rb<cons.nRBfit; rb++)
-			{				
-				// Get coefficient
-				if (!((dType > 1) && (rb == 0))) // Exclude constant terms apart from first
-				{
-					initialParams[(dType-1)*(cons.nRBfit-1) + rb] = vecs.dihedralData[d*cons.dihedralDataSize + 5 + rb];
-					currentParams[(dType-1)*(cons.nRBfit-1) + rb] = vecs.dihedralData[d*cons.dihedralDataSize + 5 + rb];
-				}
-			}	
-		}
-	}
-	if (cons.size[5] != 0)
-	{
-		initialParams[cons.numDihedralParams    ] = vecs.ljPairFitData[2]; // Lennard-Jones sigma and epsilon
-		initialParams[cons.numDihedralParams + 1] = vecs.ljPairFitData[3];	
-		currentParams[cons.numDihedralParams    ] = vecs.ljPairFitData[2];
-		currentParams[cons.numDihedralParams + 1] = vecs.ljPairFitData[3];
-	}
-	
-	
-	// -------- DO OPTIMISATION ------------------------------------------------------------------------------- 
-	
-	simulated_annealing(cons, vecs, initialParams, currentParams, annealIt);
-	
-	downhill_simplex(cons, vecs, initialParams, currentParams, simplexIt);
-	
-	//steepest_descent(cons, vecs, initialParams, currentParams, downhillIt);
-	
-	conjugate_gradient(cons, vecs, initialParams, currentParams, downhillIt);
-	
-	// ---------------------------------------------------------------------------------------------------------
-	
-	// Write best energy
-	error_from_trial_point(cons, initialParams, currentParams, 0, vecs, 1);
-	
-}
-
-int simulated_annealing(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int annealIt)
+int simulated_annealing(constant_struct cons, vector_struct vecs, fitting_param_struct &initialParams, fitting_param_struct &currentParams, int annealIt)
 {
 	int printFreq = 100; // Print simplex to console every printFreq steps
 	
@@ -480,46 +371,53 @@ int simulated_annealing(constant_struct cons, vector_struct vecs, vector<double>
 	annealStream.precision(12);
 	bool toPrint, toWrite;
 	
-	vector<double> oldParams(cons.numTotalParams);
-	vector<double> annealParams(cons.numTotalParams);
-		
-	for (int p=0; p<(cons.numTotalParams); p++)
-	{
-		oldParams[p] = currentParams[p];
-		cout << oldParams[p] << " ";
-	}
-	cout << endl;
+	fitting_param_struct oldParams = currentParams;
+	fitting_param_struct annealParams = currentParams;
 	
 	std::default_random_engine generator;
 	std::normal_distribution<double> distribution(0.0,1.0);
 	
-	for (int iT=0; iT < annealIt; iT++)
-	{
+	int numDihedralParams = currentParams.totalUniqueDihedrals*(cons.nRBfit-1);
+	
+	for (int iT=0; iT < annealIt; iT++) {
+		//
 		toPrint = (iT%printFreq == 0);
 		toWrite = (iT%cons.annealWrite == 0);
 		
-		if (toPrint)
+		if (toPrint) {
 			cout << "Simulated annealing iteration " << iT << ", temp " << temperature << "\n\n";
-		
-		// Generate trial point
-		for (int p=0; p<cons.numDihedralParams; p++)
-		{
-			double normalStep = distribution(generator);
-			annealParams[p] = oldParams[p] + normalStep*sqrt(temperature/cons.vTempInitial)*cons.dihedralStep;
 		}
-		if (cons.size[5] != 0) // If fitting a LJ pair as well
-		{
-			// Use abs() to prevent negative LJ parameters, e.g. if step size is set too large
-			annealParams[cons.numDihedralParams] = std::abs(oldParams[cons.numDihedralParams] 
+			
+		// Generate trial point
+		//cout << "Trial dihedral params:\n";
+		for (int i_s=0; i_s < cons.numPhiSurfaces; i_s++) {
+			//
+			double normalStep = distribution(generator);
+			annealParams.uShift[i_s] = oldParams.uShift[i_s]
+				+ normalStep*sqrt(temperature/cons.vTempInitial)*cons.dihedralStep;
+		}
+		
+		for (int p=0; p < numDihedralParams; p++) {
+			//
+			double normalStep = distribution(generator);			
+			annealParams.rbCoeff[p] = oldParams.rbCoeff[p] 
+				+ normalStep*sqrt(temperature/cons.vTempInitial)*cons.dihedralStep;
+			//cout << annealParams.rbCoeff[p] << endl;
+		}
+		for (int pair=0; pair < currentParams.totalUniquePairs; pair++) {
+			//
+			annealParams.ljSigma[pair] = std::abs(oldParams.ljSigma[pair] 
 				+ cons.sigmaStep*sqrt(temperature/cons.vTempInitial)*distribution(generator));
-			annealParams[cons.numDihedralParams + 1] = std::abs(oldParams[cons.numDihedralParams + 1] 
-				+ cons.epsilonStep*sqrt(temperature/cons.vTempInitial)*distribution(generator));	
+			annealParams.ljEps[pair] = std::abs(oldParams.ljEps[pair] 
+				+ cons.epsilonStep*sqrt(temperature/cons.vTempInitial)*distribution(generator));
+			//cout << "Trial (sigma,epsilon) = (";
+			//cout << annealParams.ljSigma[pair] << ", " << annealParams.ljEps[pair] << ")\n";
 		}
 		
 		// Test neighbour parameters
-		long double oldError = error_from_trial_point(cons, initialParams, oldParams, 0, vecs, 0);
+		double oldError = error_from_trial_point(cons, vecs, initialParams, oldParams, 0);
 		annealStream << oldError << endl;
-		long double trialError = error_from_trial_point(cons, initialParams, annealParams, 0, vecs, 0);
+		double trialError = error_from_trial_point(cons, vecs, initialParams, annealParams, 0);
 		
 		// Compute acceptance probability
 		double aProb = exp((oldError-trialError)/temperature);
@@ -530,288 +428,242 @@ int simulated_annealing(constant_struct cons, vector_struct vecs, vector<double>
 			cout << "Trial error = " << trialError << endl;
 			cout << "Acceptance probability = " << aProb << "\n\n";
 		}	
-		if (aProb > (rand()/double(RAND_MAX)))
-		{
-			if (toPrint)
-				cout << "Accepting these params: \n";
-		
-			for (int col=0; col < (cons.numTotalParams); col++)
-			{
-				oldParams[col] = annealParams[col];
-				
-				if (toPrint)
-					cout << std::setprecision(8) << std::setw(10) << oldParams[col] << " ";
+		if (aProb > (rand()/double(RAND_MAX))) {
+			if (toPrint) {
+				cout << "Accepting these params.\n";
+				print_params_console(cons, annealParams);
 			}
-			if (toPrint)
-				cout << endl;
+			oldParams = annealParams;
 		}
-		else if (toPrint)
-		{
+		else if (toPrint) {
 			cout << "Rejecting these params! \n\n";
 		}
-		
 		temperature *= cons.vTempFactor;
 	}
 	
 	// Update final parameters
-	for (int col=0; col<(cons.numTotalParams); col++)
-		currentParams[col] = oldParams[col];
+	currentParams = oldParams;
 	
 	return 0;
 }
 
-int downhill_simplex(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int simplexIt)
+int print_params_console(constant_struct &cons, fitting_param_struct &printParams) 
+{
+	int numDihedralParams = printParams.totalUniqueDihedrals*(cons.nRBfit-1);
+	
+	for (int i_s=0; i_s < cons.numPhiSurfaces; i_s++) {
+		cout << std::setprecision(6) << std::setw(10) << printParams.uShift[i_s];
+	}
+	cout << "  ";
+	for (int p=0; p < numDihedralParams; p++) {
+		cout << std::setprecision(6) << std::setw(10) << printParams.rbCoeff[p];	
+	}
+	cout << "  ";
+	for (int pair=0; pair < printParams.totalUniquePairs; pair++) {
+		cout << std::setprecision(6) << std::setw(10) << printParams.ljSigma[pair];	
+		cout << std::setprecision(6) << std::setw(10) << printParams.ljEps[pair];
+	}
+	cout << endl;
+	return 0;
+}
+
+int print_simplex_console(constant_struct &cons, simplex_struct &printSim)
+{
+	for (int row=0; row<printSim.plex.size(); row++) {
+		print_params_console(cons, printSim.plex[row]);	
+	}	
+	return 0;
+}
+
+int downhill_simplex(constant_struct cons, vector_struct vecs, fitting_param_struct &initialParams, fitting_param_struct &currentParams, int simplexIt)
 {
 	cout << "\nPerforming " << simplexIt << " downhill simplex iteraitons\n\n";
-	long double nmEPS = 1.0E-14L;
-	int printFreq = 100; // Print simplex to console every printFreq steps
+	double nmEPS = 1.0E-14L;
+	int printFreq = 1; // Print simplex to console every printFreq steps
 	int numReflectSteps = 0;
 	
-	// Generate initial simplex	
-	vector<double> simplex(cons.simplexSize*(cons.numTotalParams));
-	vector<long double> simplexErrors(cons.simplexSize);
-	vector<double> reflectParams(cons.numTotalParams);
-	vector<double> expansionParams(cons.numTotalParams);
-	vector<double> contractParams(cons.numTotalParams);
-	vector<double> centroid(cons.numTotalParams);
-	vector<int> errorRankToRow(cons.simplexSize); // Argument is error rank, output is corresponding row of simplex
+	int simpSize = cons.numTotalParams + 1;
+	cout << "Simplex size: " << simpSize << endl;
 	
-	// Initialise error rank vector as 0,1,2...
-	for (int r=0; r<cons.simplexSize; r++)
-		errorRankToRow[r] = r;
+	// Create simplex
+	simplex_struct sim;
 	
-	define_initial_simplex(cons, currentParams, simplex);
+	// Choose specially adapted parameters 
+	if (cons.useAdaptiveNelderMead) { 
+		// My parameters
+		sim.nmReflect = 1.0;
+		sim.nmExpand = 1.0 + 2.0/double(cons.numTotalParams);
+		sim.nmContra = 0.9 - 0.8/double(cons.numTotalParams);
+		sim.nmShrink = 1.0 - 1.0/double(cons.numTotalParams);
+	}
+	else {
+		// Default parameters 
+		sim.nmReflect = 1.0;
+		sim.nmExpand = 2.0;
+		sim.nmContra = 0.8;
+		sim.nmShrink = 0.5;
+	}
+
+	// Initialize simplex points from current params
+	sim.plex.resize(simpSize);
+	for (int row=0; row<simpSize; row++) {
+		sim.plex[row] = currentParams; 
+	}
+	sim.initializeSimplex();
 	
-	bool toWrite, toPrint;
-	ofstream simplexStream;
-	simplexStream.precision(12);
-	simplexStream.open("simplex_energy.txt");
+	// Print starting simplex
+	cout << "--- INITIAL SIMPLEX ---\n";
+	print_simplex_console(cons, sim);
 	
 	// Analyse simplex and fill simplexErrors
-	for (int row=0; row<cons.simplexSize; row++)
-	{
-		simplexErrors[row] = error_from_trial_point(cons, initialParams, simplex, (row*cons.numTotalParams), vecs, 0);
-		cout << "Row: " << row << ", error " << simplexErrors[row] << endl;
+	for (int row=0; row<simpSize; row++) {
+		sim.plexErrors[row] = error_from_trial_point(cons, vecs, initialParams, sim.plex[row], 0);
+		sim.errorRankToRow[row] = row;
+		cout << "Row: " << row << ", error " << sim.plexErrors[row] << endl;
 	}
 	
-	for (int iD=0; iD < simplexIt; iD++)
-	{
-		toWrite = (iD%cons.downhillWrite == 0);
-		toPrint = (iD%printFreq == 0);
-		
-		if (toPrint) {
-			cout << "\nIteration: " << iD << endl << endl;
-		}
+	for (int iD=0; iD < simplexIt; iD++) {
+		//
+		int toPrint = (iD%printFreq == 0);	
+		if (toPrint) cout << "\nIteration: " << iD << endl << endl;
 
 		// Sort errors, determine max, min and write best
-		error_sort(cons.simplexSize, simplexErrors, errorRankToRow);
-		
-		int worstRow = errorRankToRow[cons.simplexSize-1];
-		int maxPoint = worstRow*(cons.numTotalParams); // Start of row containing highest error point
-
-		long double maxError = simplexErrors[ errorRankToRow[cons.simplexSize-1] ];
-		long double secondMaxError = simplexErrors[ errorRankToRow[cons.simplexSize-2] ];
-		long double minError = simplexErrors[ errorRankToRow[0] ];
+		error_sort(sim.plexErrors, sim.errorRankToRow);		
+		int bestRow = sim.errorRankToRow[0];
+		int worstRow = sim.errorRankToRow[simpSize-1];
+		double minError = sim.plexErrors[bestRow];
+		double maxError = sim.plexErrors[worstRow];
+		double secondMaxError = sim.plexErrors[sim.errorRankToRow[simpSize-2]];	
 		
 		// Return if end condition met
-		if (std::fabs(maxError-minError)/maxError < nmEPS)
-		{
-			cout << std::setprecision(12) << simplexErrors[worstRow] << endl;
-			cout << std::setprecision(12) << simplexErrors[0] << endl;
-			cout << std::setprecision(12) << std::fabs(maxError-minError)/maxError << endl;
+		if (std::fabs(maxError-minError)/maxError < nmEPS) {
 			cout << "\nEnding downhill simplex routine after " << iD << " iterations\n\n";
 			cout << "The percentage of reflect steps was " << 100.0*double(numReflectSteps)/double(iD) << endl;
-			if (simplexIt > 0) // Update currentParams array
-			{
-				cout << "\n Best params from simplex:\n";
-				for (int col=0; col<(cons.numTotalParams); col++)
-				{
-					currentParams[col] = simplex[ errorRankToRow[0]*cons.numTotalParams + col ];		
-					cout << currentParams[col] << " ";
-				}
-					
+			
+			if (simplexIt > 0) {
+				// Update currentParams array
+				cout << "\n Best params from simplex:\n";			
+				print_params_console(cons, sim.plex[bestRow]);	
+				currentParams = sim.plex[bestRow];					
 			}
 			return 0;		
 		}
 		
-		simplexStream << minError << endl;
-		
 		// Print best
-		if (toPrint)
-			cout << "MAX and MIN errors: " << std::setprecision(20) << maxError << " " << minError << endl;
+		if (toPrint) cout << "MAX and MIN errors: " << std::setprecision(16) << maxError << " " << minError << endl;
 		
-		// Compute centroid of all points execpt worst
-		for (int col=0; col<cons.numTotalParams; col++)
-		{
-			double sumCentroidCol = 0.0;
-			for (int row=0; row<cons.simplexSize; row++)
-			{
-				// If this isn't worst row
-				if (row != errorRankToRow[cons.simplexSize-1])
-				{
-					sumCentroidCol += simplex[row*(cons.numTotalParams) + col];
-				}
-			}
-			centroid[col] = sumCentroidCol/(cons.simplexSize-1);
-		}
+		// Compute centroid of all points execpt worst		
+		sim.computeCentroid();
 		
 		// Compute reflected point and output best params
-		if (toPrint)
-			cout << "\nComputing reflected point in opposite direction to point " << errorRankToRow[cons.simplexSize-1] << endl;
-		
-		for (int col=0; col<cons.numTotalParams; col++) 
-		{
-			reflectParams[col] = centroid[col] + cons.nmReflect*(centroid[col] - simplex[maxPoint + col]);
-		}
-		
-		long double reflectError = error_from_trial_point(cons, initialParams, reflectParams, 0, vecs, 0);
-		
-		if (toPrint)
-			cout << "\nTotal residual for reflected point is " << std::setprecision(14) << std::setw(16) << reflectError << endl << endl;
+		if (toPrint) cout << "\nComputing reflected point in opposite direction to point " << worstRow << endl;
+
+		sim.computeReflect();
+			
+		double reflectError = error_from_trial_point(cons, vecs, initialParams, sim.reflectPoint, 0);
 		
 		// If neither new best nor worst (or 2nd worst), replace worst row of simplex with trial point
-		if ((reflectError <= secondMaxError) && (reflectError >= minError))
-		{
-			if (toPrint)
-			{
+		if ((reflectError <= secondMaxError) && (reflectError >= minError)) {
+			if (toPrint) {
 				cout << "Reflected point neither best nor worst.\n";
 				cout << "Replacing worst point with reflected point.\n";	
-			}			
-			
-			for (int col=0; col<cons.numTotalParams; col++)
-			{
-				simplex[maxPoint + col] = reflectParams[col];
-			}
-			simplexErrors[worstRow] = reflectError;
+			}		
+				
+			sim.plex[worstRow] = sim.reflectPoint;	
+			sim.plexErrors[worstRow] = reflectError;
 			numReflectSteps++;
 		}
+		
 		// If best, test with expansion in direction of reflected point
-		else if (reflectError < minError)
-		{
-			if (toPrint)
-			{
+		else if (reflectError < minError) {
+			if (toPrint) {
 				cout << "Reflected point is better than any point in simplex.\n";
 				cout << "Generating new point by expansion.\n\n";
 			}
+						
+			sim.computeExpand();
 			
-			for (int col=0; col<cons.numTotalParams; col++)
-			{
-				expansionParams[col] = reflectParams[col] + cons.nmExpand*(reflectParams[col] - centroid[col]);
-			}
 			// Test expanded point
-			long double expansionError = error_from_trial_point(cons, initialParams, expansionParams, 0, vecs, 0);
+			double expandError = error_from_trial_point(cons, vecs, initialParams, sim.expandPoint, 0);
 			
-			if (expansionError < minError)
-			{
-				if (toPrint)
-				{
+			if (expandError < minError) {
+				if (toPrint) {
 					cout << "Expanded point even better.\n";
 					cout << "Replacing worst point with expanded point.\n\n";
-				}			
-				for (int col=0; col < (cons.numTotalParams); col++)
-				{
-					simplex[maxPoint + col] = expansionParams[col];
 				}
-				simplexErrors[worstRow] = expansionError;
+											
+				sim.plex[worstRow] = sim.expandPoint;
+				sim.plexErrors[worstRow] = expandError;
 			}
-			else
-			{
-				if (toPrint)
-				{
+			else {
+				if (toPrint) {
 					cout << "Expansion unsuccessful.\n";
 					cout << "Replacing worst point with reflected point.\n\n";
-				}
-				for (int col=0; col <cons.numTotalParams; col++)
-				{
-					simplex[maxPoint + col] = reflectParams[col];
-				}
-				simplexErrors[worstRow] = reflectError;
-				numReflectSteps++;
-			
+				}			
+				
+				sim.plex[worstRow] = sim.reflectPoint;
+				sim.plexErrors[worstRow] = reflectError;
+				numReflectSteps++;			
 			}
 		}
-		// Else, the reflected point error must be > the second worst point
-		else
-		{
-			if (toPrint)
+		else {
+			// Else, the reflected point error must be > the second worst point
+			if (toPrint) {
 				cout << "Reflection unsuccessful, performing contraction.\n";
-			
-			//Replace worst point by reflected point if it's an improvement
-			if (reflectError < maxError)
-			{
-				for (int col=0; col<cons.numTotalParams; col++)
-				{
-					simplex[maxPoint + col] = reflectParams[col];
-				}
-				simplexErrors[worstRow] = reflectError;
+			}
+			//Replace worst point by reflected point if it's an improvement before contraction
+			if (reflectError < maxError) {
+				
+				sim.plex[worstRow] = sim.reflectPoint;
+				sim.plexErrors[worstRow] = reflectError;
 				maxError = reflectError;
 			}
 			
-			for (int col=0; col<cons.numTotalParams; col++)
-			{
-				contractParams[col] = centroid[col] + cons.nmContract*(simplex[maxPoint+col] - centroid[col]);
-			}
+			sim.computeContract();
+						
 			// Test contracted point
-			long double contractError = error_from_trial_point(cons, initialParams, contractParams, 0, vecs, 0);
+			double contractError = error_from_trial_point(cons, vecs, initialParams, sim.contraPoint, 0);
 			
-			if (contractError < maxError)
-			{
-				if (toPrint)
+			if (contractError < maxError) {
+				if (toPrint) {
 					cout << "Replacing worst point with contracted point.\n\n";
+				}
 				
-				for (int col=0; col<cons.numTotalParams; col++)
-				{
-					simplex[maxPoint + col] = contractParams[col];
-				}	
-				simplexErrors[worstRow] = contractError;
+				sim.plex[worstRow] = sim.contraPoint;
+				sim.plexErrors[worstRow] = contractError;
 			}
-			else // Reduction towards best point
-			{
-				if (toPrint)
+			else {
+				// Reduction towards best point
+				if (toPrint) {
 					cout << "Contracted point is new worst point. Trying reduction towards best point.\n\n";
-				
-				for (int row=0; row<cons.simplexSize; row++)
-				{
-					for (int col=0; col<cons.numTotalParams; col++)
-					{
-						double bestParam = simplex[errorRankToRow[0]*(cons.numTotalParams) + col];
-						double currentParam = simplex[row*(cons.numTotalParams) + col];
-						simplex[row*cons.numTotalParams + col] = bestParam + cons.nmShrink*(currentParam-bestParam);
-					}	
-					// Update error for reduced point
-					simplexErrors[row] = error_from_trial_point(cons, initialParams, simplex, (row*cons.numTotalParams), vecs, 0);
+				}
+				for (int row=0; row<simpSize; row++) {
 					
+					if (row != bestRow) {
+						sim.reducePoint(row);
+						sim.plexErrors[row] = error_from_trial_point(cons, vecs, initialParams, sim.plex[row], 0);
+					}					
 				}
 			}	
 		}
-		
 		// Output new simplex
-		if (toPrint)
-		{
-			cout << "Updated simplex: " << endl;
-			for (int row=0; row<cons.simplexSize; row++)
-			{
-				for (int col=0; col<(cons.numTotalParams); col++)
-				{
-					cout << std::setprecision(8) << std::setw(10) << simplex[row*(cons.numTotalParams) + col] << " ";
-				}
-				cout << endl;
-			}
+		if (toPrint) {
+			print_simplex_console(cons, sim);
 		}
-	}
+	} // Iteration loop
 	
-	if (simplexIt > 0) // Update currentParams array
-	{
-		for (int col=0; col<(cons.numTotalParams); col++) {
-			currentParams[col] = simplex[errorRankToRow[0]*cons.numTotalParams + col];
-		}				
+	if (simplexIt > 0) {
+		// Update currentParams array
+		error_sort(sim.plexErrors, sim.errorRankToRow);
+		currentParams = sim.plex[sim.errorRankToRow[0]];
 	}
 		
 	cout << "\nEnding downhill simplex routine after max iterations\n\n";
 	
 	return 0;
-}
+}  
 
+/*
 int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int gradientIt)
 {
 	int printFreq = 100; // Print every printFreq steps
@@ -825,8 +677,8 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 	
 	vector<double> tempParams(cons.numTotalParams);
 	
-	long double currentF;
-	long double previousF = error_from_trial_point(cons, initialParams, currentParams, 0, vecs, 0);
+	double currentF;
+	double previousF = error_from_trial_point(cons, vecs, initialParams, currentParams, 0);
 	
 	ofstream cgStream;
 	cgStream.precision(12);
@@ -839,8 +691,8 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 	double currentBestAlpha = alpha;
 		
 	const int nMax = 45; // Maximum number of iterations in line search
-	long double lineSearchF[nMax];
-	long double currentBestF = previousF;
+	double lineSearchF[nMax];
+	double currentBestF = previousF;
 		
 	// Perform line search
 	for (int n=0; n<nMax; n++)
@@ -849,7 +701,7 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 			tempParams[col] = currentParams[col] - alpha*gradVector[col];
 		
 		// Write corresponding value of F
-		lineSearchF[n] = error_from_trial_point(cons, initialParams, tempParams, 0, vecs, 0);
+		lineSearchF[n] = error_from_trial_point(cons, vecs, initialParams, tempParams, 0);
 		
 		if (lineSearchF[n] < currentBestF)
 		{
@@ -866,7 +718,7 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 		currentParams[col] -= currentBestAlpha*gradVector[col];
 	}		
 		
-	previousF = error_from_trial_point(cons, initialParams, currentParams, 0, vecs, 0);
+	previousF = error_from_trial_point(cons, vecs, initialParams, currentParams, 0);
 	
 	// Do modified conjugate gradient steps -----------------------------------------------------------------------------
 	for (int iG=0; iG < gradientIt; iG++)
@@ -921,7 +773,7 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 			for (int col=0; col<(cons.numTotalParams); col++)
 				tempParams[col] = currentParams[col] - alpha*cgVectorNew[col];
 
-			currentF = error_from_trial_point(cons, initialParams, tempParams, 0, vecs, 0);
+			currentF = error_from_trial_point(cons, vecs, initialParams, tempParams, 0);
 			
 			// Test Armijo-type condition 
 			
@@ -950,15 +802,337 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> 
 	}		
 	
 	return 0;
-} 
+}  */
 
-int xyz_files_read(constant_struct cons, vector_struct &vecs)
+int connectivity_read(constant_struct &cons, vector_struct &vecs, int i_s)
+{
+	ifstream connectStream;	
+	cout << "Opening " << vecs.connectFileList[i_s] << endl;
+	
+	connectStream.open(vecs.connectFileList[i_s]);
+	
+	// Read size of this molecule (num atoms, bonds, etc.)
+	string connectLine;
+	int section = -1;
+	while(getline(connectStream, connectLine)) {
+		if (connectLine.find("atoms") != string::npos)
+			section = 0;
+		else if (connectLine.find("bonds") != string::npos) {
+			assert (section == 0);
+			section = 1;
+		}
+		else if (connectLine.find("angles") != string::npos) {
+			assert (section == 1);
+			section = 2;
+		}
+		else if (connectLine.find("dihedrals") != string::npos) {
+			assert (section == 2);
+			section = 3;
+		}
+		else if (connectLine.find("impropers") != string::npos) {
+			assert (section == 3);
+			section = 4;
+		}
+		else if (connectLine.find("lj_pair_fit") != string::npos) {
+			assert (section == 4);
+			section = 5;
+		}
+		else if (!connectLine.empty() && section >= 0) {
+			
+			switch(section) {
+				case 0 : vecs.molSize[i_s].atoms++; break;
+				case 1 : vecs.molSize[i_s].bonds++; break;
+				case 2 : vecs.molSize[i_s].angles++; break;
+				case 3 : vecs.molSize[i_s].dihedrals++; break;
+				case 4 : vecs.molSize[i_s].impDihedrals++; break;
+				case 5 : vecs.molSize[i_s].pairs++; break;
+			}
+		}
+	}
+	cout << vecs.molSize[i_s].atoms << " atoms found.\n";
+	cout << vecs.molSize[i_s].bonds << " bonds found.\n";
+	cout << vecs.molSize[i_s].angles << " angles found.\n";
+	cout << vecs.molSize[i_s].dihedrals << " dihedrals found.\n";
+	cout << vecs.molSize[i_s].impDihedrals << " improper dihedrals found.\n";
+	cout << vecs.molSize[i_s].pairs << " special pairs found.\n";
+	
+	// Resize inner loop of vector<vector> types for this molecule and energy surface
+	vecs.xyzData[i_s].resize(cons.numConfigs*vecs.molSize[i_s].atoms*3);	
+	vecs.energyData[i_s].resize(cons.numConfigs);
+	vecs.energyWeighting[i_s].resize(cons.numConfigs);
+	vecs.uConst[i_s].resize(cons.numConfigs);
+	
+	vecs.atomData[i_s].resize(vecs.molSize[i_s].atoms*cons.atomDataSize);
+	vecs.bondData[i_s].resize(vecs.molSize[i_s].bonds*cons.bondDataSize);
+	vecs.angleData[i_s].resize(vecs.molSize[i_s].angles*cons.angleDataSize);
+	vecs.dihedralData[i_s].resize(vecs.molSize[i_s].dihedrals*cons.dihedralDataSize);
+	
+	if (vecs.molSize[i_s].impDihedrals != 0){
+		vecs.improperData[i_s].resize(vecs.molSize[i_s].impDihedrals*cons.dihedralDataSize);
+	}
+	if (vecs.molSize[i_s].pairs != 0) {
+		vecs.pairData[i_s].resize(vecs.molSize[i_s].pairs*cons.pairDataSize);
+	}
+	
+	vecs.bondSepMat[i_s].resize(vecs.molSize[i_s].atoms*vecs.molSize[i_s].atoms);
+	vecs.rijMatrix[i_s].resize(vecs.molSize[i_s].atoms*vecs.molSize[i_s].atoms);
+	vecs.sigmaMatrix[i_s].resize(vecs.molSize[i_s].atoms*vecs.molSize[i_s].atoms);
+	vecs.epsilonMatrix[i_s].resize(vecs.molSize[i_s].atoms*vecs.molSize[i_s].atoms);
+	vecs.qqMatrix[i_s].resize(vecs.molSize[i_s].atoms*vecs.molSize[i_s].atoms);
+	
+	string fileSection;
+	connectStream.close();
+	connectStream.open(vecs.connectFileList[i_s]);
+	
+	// Read atoms (with charges and van der Waals parameters)
+	connectStream >> fileSection;
+	if (fileSection == "atoms") {
+		for (int a=0; a<vecs.molSize[i_s].atoms; a++) {
+			for (int i=0; i<cons.atomDataSize; i++) {
+				connectStream >> vecs.atomData[i_s][a*cons.atomDataSize + i];
+			}
+		}
+	}
+	else {
+		cout << "Error in input file format (no atoms section)\n\n";
+		return 1;
+	}
+	
+	// Read bonds
+	connectStream >> fileSection;
+	if (fileSection == "bonds") {
+		for (int b=0; b<vecs.molSize[i_s].bonds; b++) {
+			for (int i=0; i<cons.bondDataSize; i++) {
+				connectStream >> vecs.bondData[i_s][b*cons.bondDataSize + i];
+			}
+		}
+	}
+	else {
+		cout << "Error in input file format (no bonds section)\n\n";
+		return 1;
+	}
+	
+	// Read angles
+	connectStream >> fileSection;
+	if (fileSection == "angles") {
+		for (int c=0; c < vecs.molSize[i_s].angles; c++) {
+			for (int i=0; i < cons.angleDataSize; i++) {
+				connectStream >> vecs.angleData[i_s][c*cons.angleDataSize + i];
+			}
+		}
+	}
+	else {
+		cout << "Error in input file format (no angles section)\n\n";
+		return 1;
+	}
+	
+	// Read dihedrals
+	connectStream >> fileSection;
+	if (fileSection == "dihedrals") {
+		for (int d=0; d < vecs.molSize[i_s].dihedrals; d++) {
+			for (int i=0; i < cons.dihedralDataSize; i++) { 
+				connectStream >> vecs.dihedralData[i_s][d*cons.dihedralDataSize + i];		
+			}
+		}
+	}
+	else {
+		cout << "Error in input file format (no dihedrals section)\n\n";
+		return 1;
+	}
+	
+	// Read harmonic improper dihedrals
+	connectStream >> fileSection;
+	if (fileSection == "impropers") {
+		for (int id=0; id < vecs.molSize[i_s].impDihedrals; id++) {
+			for (int i=0; i < cons.improperDataSize; i++) { 
+				connectStream >> vecs.improperData[i_s][id*cons.improperDataSize + i];
+			}
+		}
+	}
+	else {
+		cout << "Error in input file format (no impropers section)\n\n";
+		return 1;
+	}
+	
+	// Read lj pair to fit
+	connectStream >> fileSection;
+	if (fileSection == "lj_pair_fit") {
+		for (int e = 0; e < vecs.molSize[i_s].pairs; e++) {
+			for (int i = 0; i < cons.pairDataSize; i++) {
+				connectStream >> vecs.pairData[i_s][e*cons.pairDataSize + i];
+			}
+		}
+	}
+	else {
+		cout << "Error in input file format (no lj_pair_fit section)\n\n";
+		return 1;
+	}
+	
+	return 0;
+}
+
+int connectivity_process(constant_struct cons, vector_struct &vecs, int i_s)
+{
+	// Read atoms separated by one bond
+	for (int i=0; i < vecs.molSize[i_s].atoms; i++)
+	{
+		for (int j=i; j < vecs.molSize[i_s].atoms; j++)
+		{
+			int m1 = i*vecs.molSize[i_s].atoms + j; // Convert to 1D array coordinate
+			int m2 = j*vecs.molSize[i_s].atoms + i; // Symmetric matrix
+			
+			int atomI = int(round(vecs.atomData[i_s][i*cons.atomDataSize])); // Get actual atom number from file
+			int atomJ = int(round(vecs.atomData[i_s][j*cons.atomDataSize]));
+			
+			// Search bonds list
+			bool bondFound = 0;
+			for (int b=0; b<vecs.molSize[i_s].bonds; b++) {				
+				if ( (vecs.bondData[i_s][b*cons.bondDataSize] == atomI) && (vecs.bondData[i_s][b*cons.bondDataSize + 1] == atomJ) ) {
+					vecs.bondSepMat[i_s][m1] = 1;
+					vecs.bondSepMat[i_s][m2] = 1;
+					bondFound = 1;
+				}
+			}
+			if (bondFound == 0) {
+				vecs.bondSepMat[i_s][m1] = 0;
+				vecs.bondSepMat[i_s][m2] = 0;
+			}			
+		}
+	}
+	
+	// Now loop over increasing bond separation number until array is populated
+	int matUpdate = 1;
+	int bondSearch = 2;
+	while (matUpdate == 1) {
+		matUpdate = 0; // This will be set to 1 if an update was made
+		
+		for (int i=0; i < vecs.molSize[i_s].atoms; i++) {
+			for (int j=(i+1); j < vecs.molSize[i_s].atoms; j++) { // j>i, since i=j are the same atom
+				int m1 = i*vecs.molSize[i_s].atoms + j; // Convert to 1D array coordinate
+				int m2 = j*vecs.molSize[i_s].atoms + i; // Symmetric matrix
+			
+				// If number of bonds between pair i-j is not already determined,
+				// look for atoms which are bondSearch-1 from atom i				
+				if (vecs.bondSepMat[i_s][m1] == 0) {
+					
+					for (int k=0; k < vecs.molSize[i_s].atoms; k++) {
+						
+						int m3 = k*vecs.molSize[i_s].atoms + j;
+						// If connection (k,j) is bondSearch-1, check if (k,i) is 1
+						if (vecs.bondSepMat[i_s][m3] == (bondSearch - 1)) {
+								
+							int m4 = k*vecs.molSize[i_s].atoms + i;
+							
+							if(vecs.bondSepMat[i_s][m4] == 1) {
+								vecs.bondSepMat[i_s][m1] = bondSearch;
+								vecs.bondSepMat[i_s][m2] = bondSearch; 
+								matUpdate = 1;
+							}
+						}
+					}
+				}
+			}
+		}
+		bondSearch++;
+	}
+	
+	cout << "Connectivity matrix complete:\n";
+	for (int i=0; i < vecs.molSize[i_s].atoms; i++) {
+		for (int j=0; j < vecs.molSize[i_s].atoms; j++) {
+			cout << vecs.bondSepMat[i_s][i*vecs.molSize[i_s].atoms+j] << " ";
+		}
+		cout << endl;
+	}
+	
+	// Work out sigma, epsilon and chargeQQ for each pair
+	for (int i=0; i < vecs.molSize[i_s].atoms; i++) {
+		for (int j=i; j < vecs.molSize[i_s].atoms; j++) {
+			
+			int m1 = i*vecs.molSize[i_s].atoms+j;
+			int a1 = int(round(vecs.atomData[i_s][i*cons.atomDataSize]));
+			int a2 = int(round(vecs.atomData[i_s][j*cons.atomDataSize]));
+			//int m2 = j*vecs.molSize[i_s].atoms+i;
+			bool toFit = 0;
+			
+			// Loop over pairs to work out if this is the LJ pair to be fitted
+			for (int p=0; p < vecs.molSize[i_s].pairs; p++) {
+				if ( (vecs.pairData[i_s][p*cons.pairDataSize] == a1) && (vecs.pairData[i_s][p*cons.pairDataSize + 1] == a2) )
+					toFit = 1;		
+			}
+			
+			assert(cons.gromacsCombRule == 2);
+			
+			double sigma_i = vecs.atomData[i_s][i*cons.atomDataSize+2];
+			double sigma_j = vecs.atomData[i_s][j*cons.atomDataSize+2];
+			
+			// Apply sigma sclaing factor for 1-4 interactions	
+			if (vecs.bondSepMat[i_s][m1] == 3) {
+				sigma_i = sigma_i > cons.sigma14factorCutoff ? 
+					sigma_i*cons.sigma14factor : sigma_i;
+				sigma_j = sigma_j > cons.sigma14factorCutoff ? 
+					sigma_j*cons.sigma14factor : sigma_j;
+			}	
+			
+			double sigma = 0.5*(sigma_i+ sigma_j);
+			double epsilon = sqrt(vecs.atomData[i_s][i*cons.atomDataSize+3]*vecs.atomData[i_s][j*cons.atomDataSize+3]);
+			double QQ = vecs.atomData[i_s][i*cons.atomDataSize+1]*vecs.atomData[i_s][j*cons.atomDataSize+1];
+			
+			// Excluded interactions
+			if (vecs.bondSepMat[i_s][m1] <= cons.nrexcl) {
+				vecs.sigmaMatrix[i_s][m1] = 0.0;
+				vecs.epsilonMatrix[i_s][m1] = 0.0;
+				vecs.qqMatrix[i_s][m1] = 0.0;
+			}
+			// 1-4 Interactions with scaling factor
+			if (vecs.bondSepMat[i_s][m1] == 3) {
+				vecs.sigmaMatrix[i_s][m1] = sigma;
+				vecs.epsilonMatrix[i_s][m1] = cons.scale14LJ*epsilon;
+				vecs.qqMatrix[i_s][m1] = cons.scale14QQ*QQ;
+			}
+			// Full interactions
+			if (vecs.bondSepMat[i_s][m1] > cons.nrexcl) {
+				vecs.sigmaMatrix[i_s][m1] = sigma;
+				vecs.epsilonMatrix[i_s][m1] = epsilon;
+				vecs.qqMatrix[i_s][m1] = QQ;
+			}
+			if (toFit == 1) {
+				//Remove LJ interaction for pairs being fit (usually 1-5 pairs)
+				vecs.epsilonMatrix[i_s][m1] = 0.0;
+			}	
+		}
+	}
+	
+	cout << "sigmaLJ matrix complete:\n";
+	for (int i = 0; i < vecs.molSize[i_s].atoms; i++) {
+		for (int j = 0; j < vecs.molSize[i_s].atoms; j++) {
+			cout << std::setw(6) << vecs.sigmaMatrix[i_s][i*vecs.molSize[i_s].atoms+j] << " ";
+		}
+		cout << endl;
+	}
+	cout << "epsilonLJ matrix complete:\n";
+	for (int i = 0; i < vecs.molSize[i_s].atoms; i++) {
+		for (int j = 0; j < vecs.molSize[i_s].atoms; j++) {
+			cout << std::setw(6) << vecs.epsilonMatrix[i_s][i*vecs.molSize[i_s].atoms+j] << " ";
+		}
+		cout << endl;
+	}
+	cout << "chargeQQ matrix complete:\n";
+	for (int i = 0; i < vecs.molSize[i_s].atoms; i++) {
+		for (int j = 0; j < vecs.molSize[i_s].atoms; j++) {
+			cout << std::setw(6) << vecs.qqMatrix[i_s][i*vecs.molSize[i_s].atoms+j] << " ";
+		}
+		cout << endl;
+	}
+	return 0;
+}
+
+int xyz_files_read(constant_struct &cons, vector_struct &vecs, int i_s)
 {
 	ifstream xyzStream;
 	
 	// Loop over full (usually 360 degree) range at specificed step size
 	if (cons.genXyzFileNames) {
-		int fileRow=0, f=0;
+		int i_f=0;
 		double phi3Min, phi3Max, phi3Step;
 		
 		if (cons.phiDim == 2){ 			
@@ -992,26 +1166,25 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs)
 					
 						// 0.125 for vertices (3D)
 						if (numBoundaries==3) {
-							vecs.energyWeighting[f] = 0.125;
+							vecs.energyWeighting[i_s][i_f] = 0.125;
 						}
 						// 0.25 for edges (3D) corners (2D)
 						else if (numBoundaries==2) {
-							vecs.energyWeighting[f] = 0.25;
+							vecs.energyWeighting[i_s][i_f] = 0.25;
 						}
 						// 0.5 for faces (3D) or edges (2D)
 						else if (numBoundaries==1) {
-							vecs.energyWeighting[f] = 0.5;
+							vecs.energyWeighting[i_s][i_f] = 0.5;
 						}
 						// 1.0 for central points
 						else {
-							vecs.energyWeighting[f] = 1.0;	
+							vecs.energyWeighting[i_s][i_f] = 1.0;	
 						}
 					}
 					else {
-						vecs.energyWeighting[f] = 1.0;	
+						vecs.energyWeighting[i_s][i_f] = 1.0;	
 					}
-					//cout << "d1, d2, weighting: " << d1 << ", " << d2 << ", " << vecs.energyWeighting[f] << endl;
-					f++;
+					//cout << "d1, d2, weighting: " << d1 << ", " << d2 << ", " << vecs.energyWeighting[i_s][i_f] << endl;
 				
 					bool file_open = 1;
 					int ts = 0;
@@ -1036,13 +1209,13 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs)
 								tsStr = "0" + tsStr;
 							else if (ts > 999)
 								cout << "Warning: timestep has 4 digits (undefined behaviour)\n";
-						
+							
 							// Generate file name		
 							if (cons.phiDim==3) {
-								fullFileName = vecs.xyzFileList[0] + d1Str + "_" + d2Str + "_" + d3Str + "-" + tsStr + ".xyz";
+								fullFileName = vecs.xyzFileList[i_s] + d1Str + "_" + d2Str + "_" + d3Str + "-" + tsStr + ".xyz";
 							}
 							else {
-								fullFileName = vecs.xyzFileList[0] + d1Str + "_" + d2Str + "-" + tsStr + ".xyz";
+								fullFileName = vecs.xyzFileList[i_s] + d1Str + "_" + d2Str + "-" + tsStr + ".xyz";
 							}
 							xyzStream.open(fullFileName.c_str());
 				
@@ -1051,10 +1224,10 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs)
 								file_open = 0;
 								// Get previous file name
 								if (cons.phiDim==3) {
-									fullFileName = vecs.xyzFileList[0] + d1Str + "_" + d2Str + "_" + d3Str + "-" + tsStrPrev + ".xyz";
+									fullFileName = vecs.xyzFileList[i_s] + d1Str + "_" + d2Str + "_" + d3Str + "-" + tsStrPrev + ".xyz";
 								}
 								else {
-									fullFileName = vecs.xyzFileList[0] + d1Str + "_" + d2Str + "-" + tsStrPrev + ".xyz";
+									fullFileName = vecs.xyzFileList[i_s] + d1Str + "_" + d2Str + "-" + tsStrPrev + ".xyz";
 								}
 								
 							}
@@ -1065,14 +1238,14 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs)
 					}					
 					else {
 						if (cons.phiDim==3) {
-							fullFileName = vecs.xyzFileList[0] + d1Str + "_" + d2Str + "_" + d3Str + ".xyz";
+							fullFileName = vecs.xyzFileList[i_s] + d1Str + "_" + d2Str + "_" + d3Str + ".xyz";
 						}
 						else {
-							fullFileName = vecs.xyzFileList[0] + d1Str + "_" + d2Str + ".xyz";
+							fullFileName = vecs.xyzFileList[i_s] + d1Str + "_" + d2Str + ".xyz";
 						}
 					}	
 					
-					cout << "Opening xyz file " << fullFileName << endl;
+					//cout << "Opening xyz file " << fullFileName << endl;
 					xyzStream.open(fullFileName.c_str());
 
 					// Read but ignore first two lines
@@ -1080,45 +1253,43 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs)
 					std::getline(xyzStream, numAtoms);
 					std::getline(xyzStream, xyzHeader);
 					
-					for (int a=0; a<cons.size[0]; a++) {
-						xyzStream >> atom >> vecs.xyzData[fileRow*3] >> vecs.xyzData[fileRow*3 + 1] >> vecs.xyzData[fileRow*3 + 2];
-						//cout << vecs.xyzData[fileRow*3] << " " << vecs.xyzData[fileRow*3+1];
-						//cout << " " << vecs.xyzData[fileRow*3+2] << endl;
-						fileRow++; // Move onto next atom	
+					for (int a=0; a<vecs.molSize[i_s].atoms; a++) {
+						int k = (i_f*vecs.molSize[i_s].atoms+a)*3;
+						xyzStream >> atom >> vecs.xyzData[i_s][k] >> vecs.xyzData[i_s][k+1] >> vecs.xyzData[i_s][k+2];
+						//cout << "K = " << k << endl;
+						//cout << vecs.xyzData[i_s][k] << " " << vecs.xyzData[i_s][k+1] << " " << vecs.xyzData[i_s][k+2] << endl;	
 					}
+					i_f++;
 				}		
 			}
 		}
 	}
-	else // Read phi coord pairs from file
-	{
+	else {
 		assert(cons.phiDim == 2);
 		
 		ifstream phiPairStream, xyzStream;
 		cout << "Reading phi pairs from " << vecs.xyzFileList[0] << endl;
 			
 		phiPairStream.open(vecs.xyzFileList[0].c_str());
-		if(!phiPairStream.is_open())
-		{
+		if( !phiPairStream.is_open() ) {
 			cout << "Error, phi pair file cannot be opened!" << endl;
 			return 1;
 		}
-		
-		int fileRow = 0;
-		for (int f=0; f<cons.numConfigs; f++)
-		{	
+
+		for (int i_f=0; i_f<cons.numConfigs; i_f++) {	
 			// Set weighting
-			vecs.energyWeighting[f] = 1.0;
+			vecs.energyWeighting[i_s][i_f] = 1.0;
 			
 			// Read phi1 and phi2 strings
 			char phi1Str[16], phi2Str[16];
 	
 			// Read phi pair strings from phiCoordFile
 			// Only supports 2D for now
-			phiPairStream >> vecs.phiPairSpec[f*2] >> vecs.phiPairSpec[f*2 +1];
+			double phi1Spec, phi2Spec;
+			phiPairStream >> phi1Spec >> phi2Spec;
 			
-			snprintf(phi1Str, 16, "%.1f", vecs.phiPairSpec[f*2]);
-			snprintf(phi2Str, 16, "%.1f", vecs.phiPairSpec[f*2 +1]);
+			snprintf(phi1Str, 16, "%.1f", phi1Spec);
+			snprintf(phi2Str, 16, "%.1f", phi2Spec);
 			
 			// Generate xyz filename
 			// This method assumes the files end with "-000.xyz"
@@ -1129,16 +1300,14 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs)
 			xyzStream.open(fileName.c_str());
 			
 			// Ignore first 2 lines and atom name (as per XYZ format)
-			int line1;
-			string line2, atom;
-			xyzStream >> line1 >> line2;
+			string numAtoms, atom, xyzHeader;
+			std::getline(xyzStream, numAtoms);
+			std::getline(xyzStream, xyzHeader);
 		
-			for (int a = 0; a < cons.size[0]; a++) 
-			{
-				xyzStream >> atom >> vecs.xyzData[fileRow*3] >> vecs.xyzData[fileRow*3 + 1] >> vecs.xyzData[fileRow*3 + 2];
-				//cout << vecs.xyzData[fileRow*3] << " " << vecs.xyzData[fileRow*3+1];
-				//cout << " " << vecs.xyzData[fileRow*3+2] << endl;
-				fileRow++; // Move onto next atom			
+			for (int a = 0; a < vecs.molSize[i_s].atoms; a++) {
+				int k = (i_f*vecs.molSize[i_s].atoms+a)*3;
+				xyzStream >> atom >> vecs.xyzData[i_s][k] >> vecs.xyzData[i_s][k+1] >> vecs.xyzData[i_s][k+2];
+				//cout << vecs.xyzData[i_s][k] << " " << vecs.xyzData[i_s][k+1] << " " << vecs.xyzData[i_s][k+2] << endl;			
 			}
 			xyzStream.close();
 		}
@@ -1146,633 +1315,59 @@ int xyz_files_read(constant_struct cons, vector_struct &vecs)
 	return 0;
 }
 
-int connectivity_read(constant_struct cons, vector_struct &vecs)
-{
-	ifstream connectStream;	
-	cout << "Opening " << cons.connectFile << endl;
-	connectStream.open(cons.connectFile.c_str());
-	
-	string fileSection;
-	// Read atoms (with charges and van der Waals parameters)
-	connectStream >> fileSection;
-	if (fileSection == "atoms")
-	{
-		for (int a=0; a<cons.size[0]; a++)
-		{
-			for (int i=0; i<cons.atomDataSize; i++)
-				connectStream >> vecs.atomData[a*cons.atomDataSize + i];
-		}
-	}
-	else
-	{
-		cout << "Error in input file format (no atoms section)\n\n";
-		return 1;
-	}
-	// Read bonds
-	connectStream >> fileSection;
-	if (fileSection == "bonds")
-	{
-		for (int b=0; b<cons.size[1]; b++)
-		{
-			for (int i=0; i<cons.bondDataSize; i++)
-				connectStream >> vecs.bondData[b*cons.bondDataSize + i];
-		}
-	}
-	else
-	{
-		cout << "Error in input file format (no bonds section)\n\n";
-		return 1;
-	}
-	
-	// Read angles
-	connectStream >> fileSection;
-	if (fileSection == "angles")
-	{
-		for (int c=0; c<cons.size[2]; c++)
-		{
-			for (int i=0; i<cons.angleDataSize; i++)
-				connectStream >> vecs.angleData[c*cons.angleDataSize + i];
-		}
-	}
-	else
-	{
-		cout << "Error in input file format (no angles section)\n\n";
-		return 1;
-	}
-	
-	// Read dihedrals
-	connectStream >> fileSection;
-	if (fileSection == "dihedrals")
-	{
-		for (int d=0; d<cons.size[3]; d++)
-		{
-			for (int i=0; i<cons.dihedralDataSize; i++)
-				connectStream >> vecs.dihedralData[d*cons.dihedralDataSize + i];		
-		}
-	}
-	else
-	{
-		cout << "Error in input file format (no dihedrals section)\n\n";
-		return 1;
-	}
-	
-	// Read harmonic improper dihedrals
-	connectStream >> fileSection;
-	if (fileSection == "impropers")
-	{
-		for (int id=0; id<cons.size[4]; id++)
-		{
-			for (int i=0; i < cons.improperDataSize; i++)
-				connectStream >> vecs.improperData[id*cons.improperDataSize + i];
-		}
-	}
-	else
-	{
-		cout << "Error in input file format (no impropers section)\n\n";
-		return 1;
-	}
-	
-	// Read lj pair to fit
-	connectStream >> fileSection;
-	if (fileSection == "lj_pair_fit")
-	{
-		for (int e = 0; e < cons.size[5]; e++)
-		{
-			for (int i = 0; i < cons.pairDataSize; i++)
-			{
-				connectStream >> vecs.ljPairFitData[e*cons.pairDataSize + i];
-			}
-		}
-	}
-	else
-	{
-		cout << "Error in input file format (no lj_pair_fit section)\n\n";
-		return 1;
-	}
-	
-	return 0;
-}
-
-int connectivity_process(constant_struct cons, vector_struct &vecs)
-{
-	// Read atoms separated by one bond
-	for (int i=0; i < cons.size[0]; i++)
-	{
-		for (int j=i; j < cons.size[0]; j++)
-		{
-			int m1 = i*cons.size[0] + j; // Convert to 1D array coordinate
-			int m2 = j*cons.size[0] + i; // Symmetric matrix
-			
-			int atomI = int(round(vecs.atomData[i*cons.atomDataSize])); // Get actual atom number from file
-			int atomJ = int(round(vecs.atomData[j*cons.atomDataSize]));
-			
-			// Search bonds list
-			bool bondFound = 0;
-			for (int b=0; b<cons.size[1]; b++)
-			{				
-				if ( (vecs.bondData[b*cons.bondDataSize] == atomI) && (vecs.bondData[b*cons.bondDataSize + 1] == atomJ) )
-				{
-					vecs.bondSepMat[m1] = 1;
-					vecs.bondSepMat[m2] = 1;
-					bondFound = 1;
-				}
-			}
-			if (bondFound == 0)
-			{
-				vecs.bondSepMat[m1] = 0;
-				vecs.bondSepMat[m2] = 0;
-			}			
-		}
-	}
-	
-	// Now loop over increasing bond separation number until array is populated
-	int matUpdate = 1;
-	int bondSearch = 2;
-	while (matUpdate == 1)
-	{
-		matUpdate = 0; // This will be set to 1 if an update was made
-		
-		for (int i=0; i < cons.size[0]; i++)
-		{
-			for (int j=(i+1); j < cons.size[0]; j++) // j>i, since i=j are the same atom
-			{
-				int m1 = i*cons.size[0] + j; // Convert to 1D array coordinate
-				int m2 = j*cons.size[0] + i; // Symmetric matrix
-			
-				// If number of bonds between pair i-j is not already determined,
-				// look for atoms which are bondSearch-1 from atom i				
-				if (vecs.bondSepMat[m1] == 0)
-				{
-					for (int k=0; k < cons.size[0]; k++)
-					{
-						int m3 = k*cons.size[0] + j;
-						// If connection (k,j) is bondSearch-1, check if (k,i) is 1
-						if (vecs.bondSepMat[m3] == (bondSearch - 1))
-						{	
-							int m4 = k*cons.size[0] + i;
-							
-							if(vecs.bondSepMat[m4] == 1)
-							{
-								vecs.bondSepMat[m1] = bondSearch;
-								vecs.bondSepMat[m2] = bondSearch; 
-								matUpdate = 1;
-							}
-						}
-					}
-				}
-			}
-		}
-		bondSearch++;
-	}
-	
-	cout << "Connectivity matrix complete:\n";
-	for (int i=0; i < cons.size[0]; i++)
-	{
-		for (int j=0; j < cons.size[0]; j++)
-		{
-			cout << vecs.bondSepMat[i*cons.size[0]+j] << " ";
-		}
-		cout << endl;
-	}
-	
-	// Work out sigma, epsilon and chargeQQ for each pair
-	for (int i=0; i < cons.size[0]; i++)
-	{
-		for (int j=i; j < cons.size[0]; j++)
-		{
-			int m1 = i*cons.size[0]+j;
-			int a1 = int(round(vecs.atomData[i*cons.atomDataSize]));
-			int a2 = int(round(vecs.atomData[j*cons.atomDataSize]));
-			//int m2 = j*cons.size[0]+i;
-			bool toFit = 0;
-			
-			// Loop over pairs to work out if this is the LJ pair to be fitted
-			for (int p=0; p < cons.size[5]; p++)
-			{
-				if ( (vecs.ljPairFitData[p*cons.pairDataSize] == a1) && (vecs.ljPairFitData[p*cons.pairDataSize + 1] == a2) )
-					toFit = 1;		
-			}
-			
-			assert(cons.gromacsCombRule == 2);
-			
-			
-			double sigma_i = vecs.atomData[i*cons.atomDataSize+2];
-			double sigma_j = vecs.atomData[j*cons.atomDataSize+2];
-			
-			// Apply sigma sclaing factor for 1-4 interactions	
-			if (vecs.bondSepMat[m1] == 3) {
-				sigma_i = sigma_i > cons.sigma14factorCutoff ? 
-					sigma_i*cons.sigma14factor : sigma_i;
-				sigma_j = sigma_j > cons.sigma14factorCutoff ? 
-					sigma_j*cons.sigma14factor : sigma_j;
-			}	
-			
-			double sigma = 0.5*(sigma_i+ sigma_j);
-			double epsilon = sqrt(vecs.atomData[i*cons.atomDataSize+3]*vecs.atomData[j*cons.atomDataSize+3]);
-			double QQ = vecs.atomData[i*cons.atomDataSize+1]*vecs.atomData[j*cons.atomDataSize+1];
-			
-			// Excluded interactions
-			if (vecs.bondSepMat[m1] <= cons.nrexcl) {
-				vecs.sigmaMatrix[m1] = 0.0;
-				vecs.epsilonMatrix[m1] = 0.0;
-				vecs.qqMatrix[m1] = 0.0;
-			}
-			// 1-4 Interactions with scaling factor
-			if (vecs.bondSepMat[m1] == 3) {
-				vecs.sigmaMatrix[m1] = sigma;
-				vecs.epsilonMatrix[m1] = cons.scale14LJ*epsilon;
-				vecs.qqMatrix[m1] = cons.scale14QQ*QQ;
-			}
-			// Full interactions
-			if (vecs.bondSepMat[m1] > cons.nrexcl) {
-				vecs.sigmaMatrix[m1] = sigma;
-				vecs.epsilonMatrix[m1] = epsilon;
-				vecs.qqMatrix[m1] = QQ;
-			}
-			if (toFit == 1) {
-				//Remove LJ interaction for pairs being fit (usually 1-5 pairs)
-				vecs.epsilonMatrix[m1] = 0.0;
-			}	
-		}
-	}
-	
-	cout << "sigmaLJ matrix complete:\n";
-	for (int i = 0; i < cons.size[0]; i++)
-	{
-		for (int j = 0; j < cons.size[0]; j++)
-		{
-			cout << std::setw(6) << vecs.sigmaMatrix[i*cons.size[0]+j] << " ";
-		}
-		cout << endl;
-	}
-	cout << "epsilonLJ matrix complete:\n";
-	for (int i = 0; i < cons.size[0]; i++)
-	{
-		for (int j = 0; j < cons.size[0]; j++)
-		{
-			cout << std::setw(6) << vecs.epsilonMatrix[i*cons.size[0]+j] << " ";
-		}
-		cout << endl;
-	}
-	cout << "chargeQQ matrix complete:\n";
-	for (int i = 0; i < cons.size[0]; i++)
-	{
-		for (int j = 0; j < cons.size[0]; j++)
-		{
-			cout << std::setw(6) << vecs.qqMatrix[i*cons.size[0]+j] << " ";
-		}
-		cout << endl;
-	}
-	return 0;
-}
-
-int constant_energy_process(constant_struct cons, vector_struct &vecs)
-{
-	int print_rij = 0;
-	vector<double> coords(3*cons.size[0]);
-	double aVec1[3], aVec2[3];
-	double dVec1[3], dVec2[3], dVec3[3];
-	double crossVec1[3], crossVec2[3], crossVec3[3];
-	ofstream constEnStream;
-	constEnStream.open("energyConst.txt");
-	
-	cout << "Processing constant energy terms in " << cons.numConfigs << " geometries.\n\n";
-	
-	// Loop over configurations
-	for (int f=0; f<cons.numConfigs; f++)
-	{
-		double energyAngle = 0.0, energyDihedral = 0.0, energyImproper = 0.0;
-		double energyLJ = 0.0, energyQQ = 0.0;
-		double energy14 = 0.0, energy15 = 0.0, energyNB = 0.0;
-		vecs.constantEnergy[f] = 0.0;
-		
-		// Read coordinates
-		for (int k=0; k<cons.size[0]; k++)
-		{
-			coords[k*3    ] = vecs.xyzData[f*cons.size[0]*3 + k*3    ];
-			coords[k*3 + 1] = vecs.xyzData[f*cons.size[0]*3 + k*3 + 1];
-			coords[k*3 + 2] = vecs.xyzData[f*cons.size[0]*3 + k*3 + 2];
-		}
-		// Calculate bond energy (currently ignored because TraPPE uses fixed bonds)
-		//
-		// Calculate angle (bending) energy
-		for (int c=0; c < cons.size[2]; c++)
-		{
-			int i = int(round(vecs.angleData[c*cons.angleDataSize    ] - 1));
-			int j = int(round(vecs.angleData[c*cons.angleDataSize + 1] - 1));
-			int k = int(round(vecs.angleData[c*cons.angleDataSize + 2] - 1));
-			// -1 Because atoms are numbered starting from one in the input file
-			
-			double theta0 = vecs.angleData[c*cons.angleDataSize + 3]*cons.pi/180.0;
-			double kTheta = vecs.angleData[c*cons.angleDataSize + 4];
-	
-			// vec j->i
-			for (int m=0; m < 3; m++)
-				aVec1[m] = coords[i*3 + m] - coords[j*3 + m];
-			
-			double modVec1 = sqrt(aVec1[0]*aVec1[0] 
-				+ aVec1[1]*aVec1[1] + aVec1[2]*aVec1[2]);
-			
-			// vec j->k
-			for (int m=0; m < 3; m++)
-				aVec2[m] = coords[k*3 + m] - coords[j*3 + m];
-			
-			double modVec2 = sqrt(aVec2[0]*aVec2[0] + aVec2[1]*aVec2[1] + aVec2[2]*aVec2[2]);
-
-			double dot12 = aVec1[0]*aVec2[0] + aVec1[1]*aVec2[1] + aVec1[2]*aVec2[2];
-
-			double theta = acos(dot12/(modVec1*modVec2));
-			energyAngle += 0.5*kTheta*(theta-theta0)*(theta-theta0);
-			//cout << "theta, theta0: " << theta*180.0/cons.pi << ", " << theta0*180.0/cons.pi << endl;
-		}
-		
-		// Calculate dihedral angles and constant energy contribution
-		int nDfit = 0;
-		for (int d=0; d < cons.size[3]; d++)
-		{
-			int i = int(round(vecs.dihedralData[d*cons.dihedralDataSize    ] - 1));
-			int j = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 1] - 1));
-			int k = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 2] - 1));
-			int l = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 3] - 1));
-			//cout << "ijkl: " << i << " " << j << " " << k << " " << l << endl;
-
-			// Calculate vectors b1 = rj-ri, b2 = rk-rj, b3 = rl-rk
-			for (int m=0; m < 3; m++)
-			{
-				dVec1[m] = coords[j*3 + m] - coords[i*3 + m];
-				dVec2[m] = coords[k*3 + m] - coords[j*3 + m];
-				dVec3[m] = coords[l*3 + m] - coords[k*3 + m];
-			}
-				
-			// Calculate normalised cross products c1 = <b1xb2>, c2 = <b2xb3>
-			crossVec1[0] = dVec1[1]*dVec2[2] - dVec1[2]*dVec2[1];
-			crossVec1[1] = dVec1[2]*dVec2[0] - dVec1[0]*dVec2[2];
-			crossVec1[2] = dVec1[0]*dVec2[1] - dVec1[1]*dVec2[0];
-			double modCrossVec1 = sqrt(crossVec1[0]*crossVec1[0] 
-				+ crossVec1[1]*crossVec1[1] + crossVec1[2]*crossVec1[2]);
-					
-			crossVec2[0] = dVec2[1]*dVec3[2] - dVec2[2]*dVec3[1];
-			crossVec2[1] = dVec2[2]*dVec3[0] - dVec2[0]*dVec3[2];
-			crossVec2[2] = dVec2[0]*dVec3[1] - dVec2[1]*dVec3[0];
-			double modCrossVec2 = sqrt(crossVec2[0]*crossVec2[0] 
-				+ crossVec2[1]*crossVec2[1] + crossVec2[2]*crossVec2[2]);
-				
-			for (int m=0; m < 3; m++)
-			{
-				crossVec1[m] /= modCrossVec1;
-				crossVec2[m] /= modCrossVec2;
-			}
-				
-			// Basis vector: d1 = cross(c1,b2)
-			crossVec3[0] = crossVec1[1]*dVec2[2] - crossVec1[2]*dVec2[1];
-			crossVec3[1] = crossVec1[2]*dVec2[0] - crossVec1[0]*dVec2[2];
-			crossVec3[2] = crossVec1[0]*dVec2[1] - crossVec1[1]*dVec2[0];
-			double modCrossVec3 = sqrt(crossVec3[0]*crossVec3[0] 
-				+ crossVec3[1]*crossVec3[1] + crossVec3[2]*crossVec3[2]);
-				
-			for (int m=0; m < 3; m++)
-				crossVec3[m] /= modCrossVec3;
-			   
-			double x = crossVec1[0]*crossVec2[0] + crossVec1[1]*crossVec2[1] +
-				crossVec1[2]*crossVec2[2]; //dot(c1,c2);
-			double y = -(crossVec3[0]*crossVec2[0] + crossVec3[1]*crossVec2[1] +
-				crossVec3[2]*crossVec2[2]); //dot(d1,c2);
-        
-			double phi = atan2(y,x);
-			double psi = phi - cons.pi;
-			
-			//cout << "d, phi: " << d << ", " << phi*180.0/cons.pi << endl;
-			
-			// Calculate cosine psi
-			double cosPsi = cos(psi);
-				
-			// Add cosines for dihedrals to be used in fitting procedure
-			int dType = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 4]));
-			if (dType != 0)
-			{				
-				vecs.cosPsiData[f*cons.numDihedralFit + nDfit] = cosPsi;
-				nDfit++;
-			}
-			else // Else add to constant energy
-			{
-				for (int rb = 0; rb < cons.nRBfit; rb++) {
-					energyDihedral += vecs.dihedralData[d*cons.dihedralDataSize + 5 + rb]*pow(cosPsi,rb);
-				}
-			}				
-		}
-		
-		// Calculate harmonic improper dihedral energy
-		for (int id=0; id<cons.size[4]; id++)
-		{
-			// Calculate angle between planes ijk and jkl
-			int i = int(round(vecs.improperData[id*cons.improperDataSize    ] - 1)); // -1 for 0-based arrays
-			int j = int(round(vecs.improperData[id*cons.improperDataSize + 1] - 1));
-			int k = int(round(vecs.improperData[id*cons.improperDataSize + 2] - 1));
-			int l = int(round(vecs.improperData[id*cons.improperDataSize + 3] - 1));
-			//cout << "ijkl: " << i << " " << j << " " << k << " " << l << endl;
-
-			// Calculate vectors b1 = rj-ri, b2 = rk-rj, b3 = rl-rk
-			for (int m=0; m < 3; m++)
-			{
-				dVec1[m] = coords[j*3 + m] - coords[i*3 + m];
-				dVec2[m] = coords[k*3 + m] - coords[j*3 + m];
-				dVec3[m] = coords[l*3 + m] - coords[k*3 + m];
-			}
-				
-			// Calculate normalised cross products c1 = <b1xb2>, c2 = <b2xb3>
-			crossVec1[0] = dVec1[1]*dVec2[2] - dVec1[2]*dVec2[1];
-			crossVec1[1] = dVec1[2]*dVec2[0] - dVec1[0]*dVec2[2];
-			crossVec1[2] = dVec1[0]*dVec2[1] - dVec1[1]*dVec2[0];
-			double modCrossVec1 = sqrt(crossVec1[0]*crossVec1[0] 
-				+ crossVec1[1]*crossVec1[1] + crossVec1[2]*crossVec1[2]);
-					
-			crossVec2[0] = dVec2[1]*dVec3[2] - dVec2[2]*dVec3[1];
-			crossVec2[1] = dVec2[2]*dVec3[0] - dVec2[0]*dVec3[2];
-			crossVec2[2] = dVec2[0]*dVec3[1] - dVec2[1]*dVec3[0];
-			double modCrossVec2 = sqrt(crossVec2[0]*crossVec2[0] 
-				+ crossVec2[1]*crossVec2[1] + crossVec2[2]*crossVec2[2]);
-				
-			for (int m=0; m < 3; m++)
-			{
-				crossVec1[m] /= modCrossVec1;
-				crossVec2[m] /= modCrossVec2;
-			}
-				
-			// Basis vector: d1 = cross(c1,b2)
-			crossVec3[0] = crossVec1[1]*dVec2[2] - crossVec1[2]*dVec2[1];
-			crossVec3[1] = crossVec1[2]*dVec2[0] - crossVec1[0]*dVec2[2];
-			crossVec3[2] = crossVec1[0]*dVec2[1] - crossVec1[1]*dVec2[0];
-			double modCrossVec3 = sqrt(crossVec3[0]*crossVec3[0] 
-				+ crossVec3[1]*crossVec3[1] + crossVec3[2]*crossVec3[2]);
-				
-			for (int m=0; m < 3; m++)
-				crossVec3[m] /= modCrossVec3;
-			   
-			double x = crossVec1[0]*crossVec2[0] + crossVec1[1]*crossVec2[1] 
-				+ crossVec1[2]*crossVec2[2];
-			double y = -(crossVec3[0]*crossVec2[0] + crossVec3[1]*crossVec2[1] 
-				+ crossVec3[2]*crossVec2[2]);
-        
-			double phi = atan2(y,x);
-			
-			// Input params are in degrees and (kJ/mol)/rad^2
-			double phi0 = (cons.pi/180.0)*vecs.improperData[id*cons.improperDataSize + 4];
-			double kHarm = vecs.improperData[id*cons.improperDataSize + 5];
-			
-			// Shift phi into range phi0-180 <= phi <= phi0+180
-			if (phi <= phi0-cons.pi)
-				phi += 2*cons.pi;
-			else if (phi >= phi0+cons.pi)
-				phi -= 2*cons.pi;
-			
-			// Sum energy
-			energyImproper += kHarm*(phi-phi0)*(phi-phi0);
-			//cout << "phi, phi0, k: " << (180.0/cons.pi)*phi << " " << (180.0/cons.pi)*phi0;
-			//cout << " " << kHarm << endl;
-		}
-		
-		
-		// Calculate LJ and QQ non-bonded energy
-		double rIJ[3];
-		
-		for (int i=0; i < cons.size[0]; i++)
-		{
-			for (int j=(i+1); j < cons.size[0]; j++) // j>i
-			{
-				int m1 = i*cons.size[0]+j;
-				int atomI = int(round(vecs.atomData[i*cons.atomDataSize])); // Get actual atom number from file data
-				int atomJ = int(round(vecs.atomData[j*cons.atomDataSize])); 
-				int atomIC = atomI - 1; // Subtract 1 for C arrays
-				int atomJC = atomJ - 1;
-				
-				// Vector pointing from i to j
-				for (int n=0; n<3; n++)
-					rIJ[n] = coords[atomJC*3 + n] - coords[atomIC*3 + n];
-				
-				// Convert A to nm
-				if (cons.xyzAngstroms) {
-					for (int n=0; n<3; n++)
-						rIJ[n] *= 0.1;
-				}
-				
-				// Pair separation
-				double r = sqrt(rIJ[0]*rIJ[0] + rIJ[1]*rIJ[1] + rIJ[2]*rIJ[2]);
-				
-				vecs.rijMatrix[m1] = r;
-				
-				// Add this pair to vecs.pairSepData if it's on the list of pairs to fit
-				for (int pair=0; pair < cons.size[5]; pair++)
-				{
-					if ( (vecs.ljPairFitData[pair*cons.pairDataSize] == atomI) 
-						&& (vecs.ljPairFitData[pair*cons.pairDataSize+1] == atomJ) )
-							vecs.pairSepData[f*cons.size[5] + pair] = r;
-				}
-				
-				double LJ6 = pow(vecs.sigmaMatrix[m1]/r,6);
-				double energyPairLJ = 4.0*vecs.epsilonMatrix[m1]*(LJ6*LJ6-LJ6);
-				
-				// Coulomb
-				// 138.9355 converts coulomb energy |q||q|/r[nm] to kJ/mol
-				double energyPairQQ = 138.9355*vecs.qqMatrix[m1]/r;
-				
-				// Split into 1-4, 1-5 and 1-6+ parts for plotting
-				if (vecs.bondSepMat[m1] == 3)
-					energy14 += (energyPairQQ + energyPairLJ);
-				else if (vecs.bondSepMat[m1] == 4)
-					energy15 += (energyPairQQ + energyPairLJ);
-				else
-					energyNB += (energyPairQQ + energyPairLJ);
-				
-				// Add to total as well
-				energyLJ += energyPairLJ;
-				energyQQ += energyPairQQ;
-			
-			}
-		}
-		
-		if (f == print_rij)
-		{
-			cout << "r_ij matrix complete for config " << print_rij << ":\n";
-			for (int i = 0; i < cons.size[0]; i++)
-			{
-				for (int j = 0; j < cons.size[0]; j++)
-				{
-					cout << std::setw(10) << vecs.rijMatrix[i*cons.size[0]+j] << " ";
-				}
-				cout << endl;
-			}
-		}
-		
-		vecs.constantEnergy[f] = energyAngle + energyDihedral + energyImproper + energyLJ + energyQQ;
-		
-		//cout << "f = " << f << endl << "Angle:    " << energyAngle << endl;
-		//cout << "Dihedral: " << energyDihedral << endl << "Improper: " << energyImproper << endl;
-		//cout << "LJ:       " << energyLJ << endl << "QQ:       " << energyQQ << endl << endl;
-		
-		constEnStream << energyAngle << ", " << energyDihedral << ", " << energyImproper << ", ";
-		constEnStream << energy14 << ", " << energy15 << ", " << energyNB << endl;
-	
-	} // End config loop
-	
-	constEnStream.close();
-	return 0;
-}
-
-int energy_read(constant_struct cons, vector_struct &vecs)
+int energy_read(constant_struct &cons, vector_struct &vecs, int i_s)
 {
 	ifstream energyStream;
-	energyStream.open(cons.energyFile.c_str());
+	energyStream.open(vecs.energyFileList[i_s]);
 	
 	if(!energyStream.is_open()) {
 		cout << "ERROR: Energy file was not opened!\n";
+		exit(EXIT_FAILURE);
 		return 1;
 	}
 	
-	for (int f=0; f<cons.numConfigs; f++) {
-		energyStream >> vecs.energyData[f];
-		vecs.energyWeighting[f] *= exp(-vecs.energyData[f]/cons.KT); // Apply Boltzmann weighting 
-		//cout << vecs.energyData[f] << endl;
+	for (int i_u=0; i_u<cons.numConfigs; i_u++) {
+		energyStream >> vecs.energyData[i_s][i_u];
+		// Apply Boltzmann weighting 
+		vecs.energyWeighting[i_s][i_u] *= exp(-vecs.energyData[i_s][i_u]/cons.KT); 
+		//cout << "Energy, weighting: " << i_u << " " << vecs.energyData[i_s][i_u] << ", ";
+		//cout << vecs.energyWeighting[i_s][i_u] << endl;
 	}
 	
-	// Integrate DFT energy over conformers
-	if (cons.useBoltzIntRes == 1)
-	{
+	/* Integrate DFT energy over conformers
+	if (cons.useBoltzIntRes == 1) {
+		assert(cons.numPhiSurfaces == 1);
+		
 		int numSections = (vecs.phi1partition.size()-1)*(vecs.phi2partition.size()-1);	
 		vector<double> sectionIntegrals(numSections, 0.0);
 	
 		// Calculate Boltzmann distribution integrals for each section
 		int i_section = 0; 
 		assert(vecs.integrationRule[i_section] == 1); // Until other integral methods supported
-	
-		for (int c1=1; c1<vecs.phi1partition.size(); c1++)
-		{
-			for (int c2=1; c2<vecs.phi2partition.size(); c2++)
-			{				
+			
+		for (int c1=1; c1<vecs.phi1partition.size(); c1++) {
+			for (int c2=1; c2<vecs.phi2partition.size(); c2++) {
+								
 				int m_max = round((vecs.phi1partition[c1]-cons.phi1Range[0])/cons.phi1Range[2]);
 				int m_min = round((vecs.phi1partition[c1-1]-cons.phi1Range[0])/cons.phi1Range[2]);
 				int n_max = round((vecs.phi2partition[c2]-cons.phi2Range[0])/cons.phi2Range[2]);
 				int n_min = round((vecs.phi2partition[c2-1]-cons.phi2Range[0])/cons.phi2Range[2]);
 			
-				for (int i_m = m_min; i_m <= m_max; i_m++)
-				{
-					for (int i_n = n_min; i_n <= n_max; i_n++)
-					{						
+				for (int i_m = m_min; i_m <= m_max; i_m++) {
+					for (int i_n = n_min; i_n <= n_max; i_n++) {						
 						// Convert (i_m,i_n) to 1D index f, phi1-major order
 					
 						int numPhi2 = round((cons.phi2Range[1]-cons.phi2Range[0])/cons.phi2Range[2] + 1);
 						int f = i_m*numPhi2 + i_n;
 					
-						if (vecs.integrationRule[i_section] == 1) // Simpsons rule
-						{
+						if (vecs.integrationRule[i_section] == 1) {
 							double intCoeff = vecs.simpsonCoeffsPhi1[i_m]*vecs.simpsonCoeffsPhi2[i_n];					
 							sectionIntegrals[i_section] += intCoeff*exp(-vecs.energyData[f]/cons.kTBoltzIntegral);
 						}
 					}	
 				}
-			
 				// Rescale sum according to integral formula
-				if (vecs.integrationRule[i_section] == 1) // Simpsons rule
-				{
+				if (vecs.integrationRule[i_section] == 1) {
 					sectionIntegrals[i_section] *= (cons.phi1Range[2]*cons.phi2Range[2])/9.0;
 				}
 				// Add integral for this section to relevant conformer
@@ -1786,165 +1381,482 @@ int energy_read(constant_struct cons, vector_struct &vecs)
 		for (int i_conf = 0; i_conf < vecs.confIntegralsDFT.size(); i_conf++) {
 			cout << vecs.confIntegralsDFT[i_conf] << endl;
 		}
-	}
+	} */
 	
 	return 0;
 }
 
-int define_initial_simplex(constant_struct cons, vector<double> initialParams, vector<double> &simplex)
+int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_param_struct &initialParams, int i_s)
 {
-	int ssM1 = cons.numTotalParams; // Width of simplex, i.e. total number of params
-	const double factorLJ = 0.01;
-	const double dihedralStep = 0.5;
+	cout << "Processing constant energy terms in " << cons.numConfigs;
+	cout << " geometries of surface " << i_s << ".\n\n";
+
+	double aVec1[3], aVec2[3];
+	double dVec1[3], dVec2[3], dVec3[3];
+	double crossVec1[3], crossVec2[3], crossVec3[3];
+	initialParams.uShift.push_back(0.0);
+		
+	// Read coordinates of all configs in i_s
+	vector<double> coords(3*vecs.molSize[i_s].atoms*cons.numConfigs);
 	
-	// Fill in simplex, add perturbation to diagonal elements
-	for (int n=0; n<cons.simplexSize; n++)
-	{
-		// Dihedral parameters
-		for (int iD=0; iD<cons.numDihedralParams; iD++)
-		{
-			simplex[n*ssM1 + iD] = initialParams[iD];
-			if (iD%ssM1 == n)
-				simplex[n*ssM1 + iD] += dihedralStep;		
+	for (int i_f=0; i_f < cons.numConfigs; i_f++) {
+		for (int atom=0; atom<vecs.molSize[i_s].atoms; atom++) {
+			int offSet = i_f*vecs.molSize[i_s].atoms*3 + atom*3;
+			coords[offSet    ] = vecs.xyzData[i_s][offSet    ];
+			coords[offSet + 1] = vecs.xyzData[i_s][offSet + 1];
+			coords[offSet + 2] = vecs.xyzData[i_s][offSet + 2];
 		}
-		// LJ pair parameters
-		if (cons.size[5] != 0)
-		{
-			int iD = cons.numDihedralParams;
-			for (int j=0; j<2; j++)
-			{
-				simplex[n*ssM1 + iD] = initialParams[iD];
-				if (iD%ssM1 == n)
-					simplex[n*ssM1 + iD] *= (1.0 + factorLJ);
-				iD++;
-			}		
-		}
-	}	
+	}
+	// Bond energy currently ignored because TraPPE uses fixed bonds
 	
-	// Output initial simplex
-	cout << "Starting simplex: " << endl;
-	for (int row=0; row<cons.simplexSize; row++)
-	{
-		for (int col=0; col<cons.numTotalParams; col++)
-		{
-			cout << std::setw(10) << simplex[row*(cons.numTotalParams) + col] << " ";
+	// Calculate angle (bending) energy
+	for (int c=0; c < vecs.molSize[i_s].angles; c++) {
+		
+		int i = int(round(vecs.angleData[i_s][c*cons.angleDataSize    ] - 1)); 
+		int j = int(round(vecs.angleData[i_s][c*cons.angleDataSize + 1] - 1));
+		int k = int(round(vecs.angleData[i_s][c*cons.angleDataSize + 2] - 1));
+		// -1 Because atoms are numbered starting from one in the input file
+			
+		double theta0 = vecs.angleData[i_s][c*cons.angleDataSize + 3]*cons.pi/180.0;
+		double kTheta = vecs.angleData[i_s][c*cons.angleDataSize + 4];
+	
+		for (int i_f=0; i_f < cons.numConfigs; i_f++) {
+			int offSet = 3*vecs.molSize[i_s].atoms*i_f;
+			
+			// vec j->i
+			for (int xyz=0; xyz < 3; xyz++) {
+				aVec1[xyz] = coords[offSet + i*3 + xyz] - coords[offSet + j*3 + xyz];
+				aVec2[xyz] = coords[offSet + k*3 + xyz] - coords[offSet + j*3 + xyz];
+			}
+			double modVec1 = sqrt(aVec1[0]*aVec1[0] + aVec1[1]*aVec1[1] + aVec1[2]*aVec1[2]);
+			double modVec2 = sqrt(aVec2[0]*aVec2[0] + aVec2[1]*aVec2[1] + aVec2[2]*aVec2[2]);
+
+			double dot12 = aVec1[0]*aVec2[0] + aVec1[1]*aVec2[1] + aVec1[2]*aVec2[2];
+
+			double theta = acos(dot12/(modVec1*modVec2));
+			
+			vecs.uConst[i_s][i_f].uAngle += 0.5*kTheta*(theta-theta0)*(theta-theta0);
+			//cout << "theta, theta0: " << theta*180.0/cons.pi << ", " << theta0*180.0/cons.pi << endl;	
+		}
+	}
+		
+	// Calculate dihedral angles and constant energy contribution
+	for (int d=0; d < vecs.molSize[i_s].dihedrals; d++) {
+		// Get dihedral type index
+		int dType = int(round(vecs.dihedralData[i_s][d*cons.dihedralDataSize + 4]));
+			
+		// If this dihedral's parameters are being varied during fit
+		if (dType != 0) {			
+			// If new type (mapping array should be initialized to -1)
+			if (vecs.dihedralIndexMapping[dType] < 0) {	
+				// Index dType maps to this dihedral number in fitting
+				vecs.dihedralIndexMapping[dType] = initialParams.totalUniqueDihedrals++;	
+				initialParams.dihedralTypeCount.push_back(1);	// First of this type			
+				cout << "Type " << dType << " is new dihedral type " << initialParams.totalUniqueDihedrals << endl;		
+				// Add coeffs for new type
+				for (int cosExp=1; cosExp < cons.nRBfit; cosExp++) {
+					double newCoeff = vecs.dihedralData[i_s][d*cons.dihedralDataSize + 5 + cosExp];
+					initialParams.rbCoeff.push_back(newCoeff);
+				}	
+			}
+			else {
+				// If not a new type, simply add one to count and average coeffs
+				size_t count = ++initialParams.dihedralTypeCount[vecs.dihedralIndexMapping[dType]];	
+				
+				for (int cosExp=1; cosExp < cons.nRBfit; cosExp++) {
+					
+					int offSet = vecs.dihedralIndexMapping[dType]*(cons.nRBfit-1);
+					double newCoeff = vecs.dihedralData[i_s][d*cons.dihedralDataSize + 5 + cosExp];
+					
+					// Take average of this and all the others of this type
+					initialParams.rbCoeff[offSet + (cosExp-1)] = 
+						(newCoeff/count) + (count-1)*initialParams.rbCoeff[offSet + (cosExp-1)]/count;
+				}
+			}
+		}
+		
+		int i = int(round(vecs.dihedralData[i_s][d*cons.dihedralDataSize    ] - 1));
+		int j = int(round(vecs.dihedralData[i_s][d*cons.dihedralDataSize + 1] - 1));
+		int k = int(round(vecs.dihedralData[i_s][d*cons.dihedralDataSize + 2] - 1));
+		int l = int(round(vecs.dihedralData[i_s][d*cons.dihedralDataSize + 3] - 1));
+		//cout << "ijkl: " << i << " " << j << " " << k << " " << l << endl;
+
+		for (int i_f=0; i_f < cons.numConfigs; i_f++) {
+			//
+			int offSet = 3*vecs.molSize[i_s].atoms*i_f;		
+			// Calculate vectors b1 = rj-ri, b2 = rk-rj, b3 = rl-rk
+			for (int xyz=0; xyz < 3; xyz++) {
+				dVec1[xyz] = coords[offSet + j*3 + xyz] - coords[offSet + i*3 + xyz];
+				dVec2[xyz] = coords[offSet + k*3 + xyz] - coords[offSet + j*3 + xyz];
+				dVec3[xyz] = coords[offSet + l*3 + xyz] - coords[offSet + k*3 + xyz];
+			}
+				
+			// Calculate normalised cross products c1 = <b1xb2>, c2 = <b2xb3>
+			crossVec1[0] = dVec1[1]*dVec2[2] - dVec1[2]*dVec2[1];
+			crossVec1[1] = dVec1[2]*dVec2[0] - dVec1[0]*dVec2[2];
+			crossVec1[2] = dVec1[0]*dVec2[1] - dVec1[1]*dVec2[0];
+			double modCrossVec1 = sqrt(crossVec1[0]*crossVec1[0] 
+				+ crossVec1[1]*crossVec1[1] + crossVec1[2]*crossVec1[2]);
+					
+			crossVec2[0] = dVec2[1]*dVec3[2] - dVec2[2]*dVec3[1];
+			crossVec2[1] = dVec2[2]*dVec3[0] - dVec2[0]*dVec3[2];
+			crossVec2[2] = dVec2[0]*dVec3[1] - dVec2[1]*dVec3[0];
+			double modCrossVec2 = sqrt(crossVec2[0]*crossVec2[0] 
+				+ crossVec2[1]*crossVec2[1] + crossVec2[2]*crossVec2[2]);
+				
+			for (int m=0; m < 3; m++) {
+				crossVec1[m] /= modCrossVec1;
+				crossVec2[m] /= modCrossVec2;
+			}
+				
+			// Basis vector: d1 = cross(c1,b2)
+			crossVec3[0] = crossVec1[1]*dVec2[2] - crossVec1[2]*dVec2[1];
+			crossVec3[1] = crossVec1[2]*dVec2[0] - crossVec1[0]*dVec2[2];
+			crossVec3[2] = crossVec1[0]*dVec2[1] - crossVec1[1]*dVec2[0];
+			double modCrossVec3 = sqrt(crossVec3[0]*crossVec3[0] 
+				+ crossVec3[1]*crossVec3[1] + crossVec3[2]*crossVec3[2]);
+				
+			for (int m=0; m < 3; m++) {
+				crossVec3[m] /= modCrossVec3;
+			}
+			   
+			double x = crossVec1[0]*crossVec2[0] + crossVec1[1]*crossVec2[1] +
+				crossVec1[2]*crossVec2[2]; //dot(c1,c2);
+			double y = -(crossVec3[0]*crossVec2[0] + crossVec3[1]*crossVec2[1] +
+				crossVec3[2]*crossVec2[2]); //dot(d1,c2);
+        
+			double phi = atan2(y,x);
+			double psi = phi - cons.pi;
+			double cosPsi = cos(psi);
+			//cout << "i_f, d, phi: " << i_f << ", " << d << ", " << phi*180.0/cons.pi << endl;
+				
+			// Write powers of cosPsi or store in constant energy 
+			for (int cosExp=0; cosExp < cons.nRBfit; cosExp++) {
+				
+				double cosPsiPow = pow(cosPsi,cosExp);
+				
+				if (dType <= 0) {
+					double constCoeff = vecs.dihedralData[i_s][d*cons.dihedralDataSize + 5 + cosExp];
+					vecs.uConst[i_s][i_f].uDihedral += constCoeff*cosPsiPow;
+				}
+				else if (cosExp > 0) {
+					vecs.cosPsiData[i_s].push_back(cosPsiPow);	
+				}
+			}	
+		}	
+	}
+	// Calculate harmonic improper dihedral energy
+	for (int id=0; id<vecs.molSize[i_s].impDihedrals; id++) {
+		// Calculate angle between planes ijk and jkl
+		int i = int(round(vecs.improperData[i_s][id*cons.improperDataSize    ] - 1)); // -1 for 0-based arrays
+		int j = int(round(vecs.improperData[i_s][id*cons.improperDataSize + 1] - 1));
+		int k = int(round(vecs.improperData[i_s][id*cons.improperDataSize + 2] - 1));
+		int l = int(round(vecs.improperData[i_s][id*cons.improperDataSize + 3] - 1));
+		//cout << "ijkl: " << i << " " << j << " " << k << " " << l << endl;
+
+		for (int i_f=0; i_f < cons.numConfigs; i_f++) {
+			
+			int offSet = 3*vecs.molSize[i_s].atoms*i_f;
+		
+			// Calculate vectors b1 = rj-ri, b2 = rk-rj, b3 = rl-rk
+			for (int xyz=0; xyz < 3; xyz++) {
+				dVec1[xyz] = coords[offSet + j*3 + xyz] - coords[offSet + i*3 + xyz];
+				dVec2[xyz] = coords[offSet + k*3 + xyz] - coords[offSet + j*3 + xyz];
+				dVec3[xyz] = coords[offSet + l*3 + xyz] - coords[offSet + k*3 + xyz];
+			}
+				
+			// Calculate normalised cross products c1 = <b1xb2>, c2 = <b2xb3>
+			crossVec1[0] = dVec1[1]*dVec2[2] - dVec1[2]*dVec2[1];
+			crossVec1[1] = dVec1[2]*dVec2[0] - dVec1[0]*dVec2[2];
+			crossVec1[2] = dVec1[0]*dVec2[1] - dVec1[1]*dVec2[0];
+			double modCrossVec1 = sqrt(crossVec1[0]*crossVec1[0] 
+				+ crossVec1[1]*crossVec1[1] + crossVec1[2]*crossVec1[2]);
+					
+			crossVec2[0] = dVec2[1]*dVec3[2] - dVec2[2]*dVec3[1];
+			crossVec2[1] = dVec2[2]*dVec3[0] - dVec2[0]*dVec3[2];
+			crossVec2[2] = dVec2[0]*dVec3[1] - dVec2[1]*dVec3[0];
+			double modCrossVec2 = sqrt(crossVec2[0]*crossVec2[0] 
+				+ crossVec2[1]*crossVec2[1] + crossVec2[2]*crossVec2[2]);
+				
+			for (int m=0; m < 3; m++) {
+				crossVec1[m] /= modCrossVec1;
+				crossVec2[m] /= modCrossVec2;
+			}
+				
+			// Basis vector: d1 = cross(c1,b2)
+			crossVec3[0] = crossVec1[1]*dVec2[2] - crossVec1[2]*dVec2[1];
+			crossVec3[1] = crossVec1[2]*dVec2[0] - crossVec1[0]*dVec2[2];
+			crossVec3[2] = crossVec1[0]*dVec2[1] - crossVec1[1]*dVec2[0];
+			double modCrossVec3 = sqrt(crossVec3[0]*crossVec3[0] 
+				+ crossVec3[1]*crossVec3[1] + crossVec3[2]*crossVec3[2]);
+				
+			for (int xyz=0; xyz < 3; xyz++) {
+				crossVec3[xyz] /= modCrossVec3;
+			}
+			   
+			double x = crossVec1[0]*crossVec2[0] + crossVec1[1]*crossVec2[1] + crossVec1[2]*crossVec2[2];
+			double y = -(crossVec3[0]*crossVec2[0] + crossVec3[1]*crossVec2[1] + crossVec3[2]*crossVec2[2]);
+        
+			double phi = atan2(y,x);
+			
+			// Input params are in degrees and (kJ/mol)/rad^2
+			double phi0 = (cons.pi/180.0)*vecs.improperData[i_s][id*cons.improperDataSize + 4];
+			double kHarm = vecs.improperData[i_s][id*cons.improperDataSize + 5];
+			
+			// Shift phi into range phi0-180 <= phi <= phi0+180
+			if (phi <= phi0-cons.pi) {
+				phi += 2*cons.pi;
+			}
+			else if (phi >= phi0+cons.pi) {
+				phi -= 2*cons.pi;
+			}
+			// Sum energy
+			vecs.uConst[i_s][i_f].uImpDihedral += kHarm*(phi-phi0)*(phi-phi0);
+		}
+	}
+		
+	// Calculate interatomic distances, LJ and QQ non-bonded energy
+	double rIJ[3];
+		
+	for (int i=0; i < vecs.molSize[i_s].atoms; i++) {
+		for (int j=(i+1); j < vecs.molSize[i_s].atoms; j++) {
+			
+			int m1 = i*vecs.molSize[i_s].atoms+j;
+			int atomI = int(round(vecs.atomData[i_s][i*cons.atomDataSize]))-1; // Get actual atom number from file data
+			int atomJ = int(round(vecs.atomData[i_s][j*cons.atomDataSize]))-1; 		
+			
+			double ljSigma = vecs.sigmaMatrix[i_s][m1];
+			double ljEps = vecs.epsilonMatrix[i_s][m1];
+			
+			// Loop over list of special pairs
+			int fitPair = 0; 
+			for (int pair=0; pair < vecs.molSize[i_s].pairs; pair++) {
+				// If pair (i,j) is on the list of pairs to fit
+				if ((vecs.pairData[i_s][pair*cons.pairDataSize] == (atomI+1)) 
+				&& (vecs.pairData[i_s][pair*cons.pairDataSize+1] == (atomJ+1))) {
+					// Get pair type index
+					int pairType = int(round(vecs.pairData[i_s][pair*cons.pairDataSize + 2]));
+			
+					double newSigma = vecs.pairData[i_s][pair*cons.pairDataSize + 3];
+					double newEpsilon = vecs.pairData[i_s][pair*cons.pairDataSize + 4];
+					// If this pair's parameters are being varied during fit
+					if (pairType != 0) {	
+						
+						fitPair = 1;								
+						// If new type (mapping array should be initialized to -1)
+						if (vecs.pairIndexMapping[pairType] < 0) {	
+							// Index pairType maps to this pair number in fitting
+							vecs.pairIndexMapping[pairType] = initialParams.totalUniquePairs++;	
+							initialParams.pairTypeCount.push_back(1);	// First of this type			
+				
+							// Add sigma and eps
+							initialParams.ljSigma.push_back(newSigma);
+							initialParams.ljEps.push_back(newEpsilon);
+							cout << "Type " << pairType << " is new pair type " << initialParams.totalUniquePairs << endl;		
+						}
+						else {
+							// If not a new type, simply add one to count and average sigma/eps
+							int mapping = vecs.pairIndexMapping[pairType];
+							size_t count = ++initialParams.pairTypeCount[vecs.pairIndexMapping[pairType]];	
+							
+							// Take average of this and all the others of this type
+							initialParams.ljSigma[mapping] = 
+								(newSigma/count) + (count-1)*initialParams.ljSigma[mapping]/count;
+							initialParams.ljEps[mapping] = 
+								(newEpsilon/count) + (count-1)*initialParams.ljEps[mapping]/count;
+						}
+					}
+					else {
+						// Pair has special value of sigma and epsilon, but is not being fit
+						ljSigma = newSigma;
+						ljEps = newEpsilon;
+						cout << "WARNING: pair (" << i << ", " << j << ") LJ parameters overwritten/n"; 
+					}
+				}
+			}
+			
+			// If pair (i,j) wasn't on the list of pairs to fit, add to constant energy	
+			for (int i_f=0; i_f < cons.numConfigs; i_f++) {
+		
+				int offSet = 3*vecs.molSize[i_s].atoms*i_f;
+			
+				// Vector pointing from i to j
+				for (int xyz=0; xyz<3; xyz++) {
+					rIJ[xyz] = coords[offSet + atomJ*3 + xyz] - coords[offSet + atomI*3 + xyz];
+				}
+			
+				// Convert A to nm
+				if (cons.xyzAngstroms) {
+					for (int n=0; n<3; n++) {
+						rIJ[n] *= 0.1;
+					}
+				}
+			
+				// Pair separation
+				double r_ij = sqrt(rIJ[0]*rIJ[0] + rIJ[1]*rIJ[1] + rIJ[2]*rIJ[2]);
+			
+				vecs.rijMatrix[i_s][m1] = r_ij; // Just for printing
+			
+				// Coulomb
+				// 138.9355 converts coulomb energy |q||q|/r[nm] to kJ/mol
+				double energyPairQQ = 138.9355*vecs.qqMatrix[i_s][m1]/r_ij;
+				vecs.uConst[i_s][i_f].uQQ += energyPairQQ;
+			
+				if (fitPair == 1) {
+					vecs.pairSepData[i_s].push_back(r_ij);	
+					//cout << "SIZE " << vecs.pairSepData[i_s].size() << endl;				
+				}
+				else {
+					double LJ6 = pow(ljSigma/r_ij,6);
+					double energyPairLJ = 4.0*ljEps*(LJ6*LJ6-LJ6);
+					
+					// Split into 1-4, 1-5 and 1-6+ parts for plotting
+					if (vecs.bondSepMat[i_s][m1] == 3) {
+						vecs.uConst[i_s][i_f].u14 += (energyPairQQ + energyPairLJ);
+					} 
+					else if (vecs.bondSepMat[i_s][m1] == 4) {
+						vecs.uConst[i_s][i_f].u15 += (energyPairQQ + energyPairLJ);
+					}
+					else {
+						vecs.uConst[i_s][i_f].u16plus += (energyPairQQ + energyPairLJ);
+					}	
+					// Add to total LJ 
+					vecs.uConst[i_s][i_f].uLJ += energyPairLJ;
+				}		
+			}
+		}
+	} 
+
+	cout << "r_ij matrix complete for final config of surface " << i_s << " :\n";
+	for (int i = 0; i < vecs.molSize[i_s].atoms; i++) {
+		for (int j = 0; j < vecs.molSize[i_s].atoms; j++) {
+			cout << std::setw(10) << vecs.rijMatrix[i_s][i*vecs.molSize[i_s].atoms+j] << " ";
 		}
 		cout << endl;
 	}
 	
+	// Sum total constant energies
+	for (int i_f=0; i_f < cons.numConfigs; i_f++) {
+		vecs.uConst[i_s][i_f].sumEnergies();
+		//cout << "Total constant energy (" << i_s << ", " << i_f << ") = " << vecs.uConst[i_s][i_f].uTotal << endl;
+	}
+
 	return 0;
 }
 
-long double error_from_trial_point(constant_struct cons, vector<double> initialParams, vector<double> &trialParams, int trialStart, vector_struct vecs, bool toWrite)
+double error_from_trial_point(constant_struct cons, vector_struct vecs, fitting_param_struct initialParams, fitting_param_struct trialParams, bool toWrite)
 {
 	ofstream energyMD;
 	ofstream energyDist;
-	vector<double> params(cons.numTotalParams);
-	vector<double> energyTotal(cons.numConfigs);
 
-	// Extract params from trialParams input vector
-	// This could be a simplex matrix, in which case trialStart is the first element of the row of params to test
-	for (int p=0; p<cons.numTotalParams; p++)
-	{
-		params[p] = trialParams[trialStart+p];
-	}
+	vector<vector<double> > energyTotal;
+	vector<vector<double> > energyDihedral;
+	vector<vector<double> > energyPair;
 	
-	if (toWrite == 1)
-	{
+	energyTotal.resize(cons.numPhiSurfaces);
+	energyDihedral.resize(cons.numPhiSurfaces);
+	energyPair.resize(cons.numPhiSurfaces);
+	
+	if (toWrite == 1) {
 		energyMD.open("energyMD.txt");
 		energyDist.open("energyDist.txt");
 	}
+	//print_params_console(cons, trialParams);
 	
-	long double sumResid = 0.0;
+	// Total sum of all contributions to objective function (F) per surface
+	vector<double> sumF(cons.numPhiSurfaces,0.0);
+	double totalSumF = 0.0;
 	
-	// Loop over configurations
-	for (int f=0; f<cons.numConfigs; f++)
-	{
-		// Calculate dihedral energy for simplex 'd' and xyz config 'f'
-		double energyDihedral = 0.0, energyPair = 0.0;
-		int dd=0; 
-		
+	// Loop over energy surfaces
+	for (int i_s=0; i_s<cons.numPhiSurfaces; i_s++) {
+		//
+		energyTotal[i_s].resize(cons.numConfigs,0.0);
+		energyDihedral[i_s].resize(cons.numConfigs,0.0);
+		energyPair[i_s].resize(cons.numConfigs,0.0);
+		int i_psiPow = 0, i_pairSep = 0;
+				
 		// Loop over all dihedrals
-		for (int d=0; d<cons.size[3]; d++)
-		{
-			// Cosine(psi) for this dihedral
-			double cosPsiPow = 1.0; // Start at cosPsi^0
-			double coeff = 0.0;
-			
+		for (int d=0; d < vecs.molSize[i_s].dihedrals; d++) {
 			// Get diherdal type
-			int dType = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 4]));
-			//cout << "d, dType = " << d << ", " << dType << endl;
-			
-			// Type 0 dihedrals are the ones not varying during the fit
-			if (dType > 0)
-			{	
-				double cosPsi = vecs.cosPsiData[f*cons.numDihedralFit+dd];
-				dd++;
-
-				for (int rb=0; rb<cons.nRBfit; rb++)
-				{
-					// Get coefficient
-					if ((dType > 1) && (rb == 0)) {
-						coeff = 0.0;
+			int dType = int(round(vecs.dihedralData[i_s][d*cons.dihedralDataSize + 4]));
+			// Map dihedral type to dihedral ID
+			int dihedralID = vecs.dihedralIndexMapping[dType];			
+			//cout << "dType, dID " << dType << " " << dihedralID << endl;
+			if (dType > 0) {
+				//
+				for (int i_f=0; i_f<cons.numConfigs; i_f++) {
+					// This loop order is less efficient, but makes it easier to access cosPsiData
+					for (int cosExp=1; cosExp<cons.nRBfit; cosExp++) {
+						double coeff = trialParams.rbCoeff[dihedralID*(cons.nRBfit-1)+(cosExp-1)];
+						double cosPsiPow = vecs.cosPsiData[i_s][i_psiPow++];
+						//cout << "d, i_f, coeff, cosPsiPow " << d << ", " << i_f <<;
+						//cout << ", " << coeff << ", " << cosPsiPow << endl; 	
+						energyDihedral[i_s][i_f] += cosPsiPow*coeff;
+					}
+				}	
+				for (int cosExp=1; cosExp<cons.nRBfit; cosExp++) {	
+					double coeff = trialParams.rbCoeff[dihedralID*(cons.nRBfit-1)+(cosExp-1)];
+					// Restraint term added directly to sumF
+					if (cons.resToZero == 1) {
+						sumF[i_s] += cons.dihedralK*coeff*coeff;
 					}
 					else {
-						coeff = params[(dType-1)*(cons.nRBfit-1) + rb];
-					}				
-				
-					energyDihedral += cosPsiPow*coeff;
-					
-					// Raise cosPsiPow to the next power
-					cosPsiPow *= cosPsi;
-				}
+						double coeffDelta = coeff-initialParams.rbCoeff[dihedralID*(cons.nRBfit-1)+(cosExp-1)];
+						sumF[i_s] += cons.dihedralK*coeffDelta*coeffDelta*cons.numConfigs;
+					}
+				}				
 			}
 		}
 		// Calculate improper dihedral energy
 			
 		// Calculate pair energy (LJ only)
-		for (int pair=0; pair<cons.size[5]; pair++)
-		{		
-			// LJ parameters for this pair
-			double sigmaPair = params[cons.numDihedralParams];
-			double epsilonPair = params[cons.numDihedralParams + 1];
-			double r = vecs.pairSepData[f*cons.size[5] + pair];
-			double LJ6 = pow(sigmaPair/r, 6);
+		for (int pair=0; pair < vecs.molSize[i_s].pairs; pair++) {		
+			// Get pair type
+			int pairType = int(round(vecs.pairData[i_s][pair*cons.pairDataSize + 2]));
+				
+			if (pairType > 0) {
+				// Map pair type to pair ID
+				int pairID = vecs.pairIndexMapping[pairType];
+				
+				for (int i_f=0; i_f<cons.numConfigs; i_f++) {	
+					double r_ij = vecs.pairSepData[i_s][i_pairSep++];
+					double sigma = trialParams.ljSigma[pairID];
+					double epsilon = trialParams.ljEps[pairID];
+					double LJ6 = pow(sigma/r_ij, 6);
 					
-			energyPair += 4.0*epsilonPair*(LJ6*LJ6-LJ6);
-		}
-			
-		// Total energy of configuration f for trial point
-		energyTotal[f] = vecs.constantEnergy[f] + energyPair + energyDihedral;
-			
-		// Compare to input energy and sum weighted square of residual
-		sumResid += (vecs.energyData[f]-energyTotal[f])*(vecs.energyData[f]-energyTotal[f])*vecs.energyWeighting[f];
+					energyPair[i_s][i_f] += 4.0*epsilon*(LJ6*LJ6-LJ6);
+					//cout << "pair, sigma, epsilon, r_ij, energyPair: ";
+					//cout << pair << ", " << sigma << ", " << epsilon <<;
+					//cout << ", " << r_ij << ", " << energyPair[i_s][i_f] << endl;
+				} 
+				// Restraint term added directly to sumF
+				double epsDelta = trialParams.ljEps[pairID] - initialParams.ljEps[pairID];
+				sumF[i_s] += cons.epsK*epsDelta*epsDelta*double(cons.numConfigs)/double(trialParams.pairTypeCount[pairID]);
+			}	
+		}	
 		
-		// Write to file
-		if (toWrite == 1)
-		{
-			energyMD << energyTotal[f] << endl;
-			energyDist << vecs.constantEnergy[f] << ", " << energyDihedral << ", " << energyPair << endl;	
+		// Now total energy is known, sum F over configs
+		for (int i_f=0; i_f<cons.numConfigs; i_f++) {	
+			//
+			energyTotal[i_s][i_f] = vecs.uConst[i_s][i_f].uTotal + trialParams.uShift[i_s] 
+				+ energyPair[i_s][i_f] + energyDihedral[i_s][i_f];
+						
+			// F += weighting*(delta*U)^2 
+			double uDelta = vecs.energyData[i_s][i_f]-energyTotal[i_s][i_f];
+			sumF[i_s] += uDelta*uDelta*vecs.energyWeighting[i_s][i_f];
+		
+			// Write to file
+			if (toWrite == 1) {
+				energyMD << energyTotal[i_s][i_f] << endl;
+			}
 		}
-	} // End of config loop
+		// Normalize by number of configs on surface i_s
+		sumF[i_s] /= double(cons.numConfigs);
+		
+		totalSumF += sumF[i_s];
+	} // i_s loop
 	
-	// Normalize sum of residuals by number of configs
-	sumResid /= double(cons.numConfigs);
-	
-	// Dihedral coefficient restraint terms
-	for (int coeff=1; coeff<cons.numDihedralParams; coeff++) 
-	{
-		if (cons.resToZero == 1)
-			sumResid += cons.dihedralK*params[coeff]*params[coeff];
-		else
-			sumResid += cons.dihedralK*(initialParams[coeff]-params[coeff])*(initialParams[coeff]-params[coeff]);
-	}
-	// Epsilon restraint term
-	if (cons.size[5] != 0)
-	{
-		double epsDef = initialParams[cons.numTotalParams-1];
-		sumResid += cons.epsK*(epsDef - params[cons.numDihedralParams+1])*(epsDef - params[cons.numDihedralParams+1]);
-	}
-	
-	// Calculate Boltzmann distribution integrals -----------------------------------------
+	/* Calculate Boltzmann distribution integrals -----------------------------------------
 	if (cons.useBoltzIntRes == 1)
 	{
 		int numConformers = *std::max_element(vecs.partitionMap.begin(),vecs.partitionMap.end());
@@ -1980,9 +1892,9 @@ long double error_from_trial_point(constant_struct cons, vector<double> initialP
 		if (toWrite == 1) {
 		cout << "RMS = " << sumRMS << endl;
 		}
-	}
+	} */
 	
-	return sumResid;
+	return totalSumF;
 }
 
 int compute_boltzmann_integrals(constant_struct cons, vector_struct vecs, vector<double> energyTotal, vector<double> &confIntegralsMD, bool toPrint)
@@ -2045,7 +1957,7 @@ int compute_boltzmann_integrals(constant_struct cons, vector_struct vecs, vector
 	}
 	return 0;
 }
-
+/*
 int compute_gradient_F(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> currentParams, vector<double> &gradVector)
 {
 	// Ensure grad vector is zero
@@ -2113,7 +2025,7 @@ int compute_gradient_F(constant_struct cons, vector_struct vecs, vector<double> 
 		}
 		
 		// Compare total energy to DFT energy to get delta
-		double energyDelta = vecs.energyData[f] - (vecs.constantEnergy[f] + energyPair + energyDihedral);
+		double energyDelta = vecs.energyData[f] - (vecs.uConst[f] + energyPair + energyDihedral);
 		//cout << "grad) f, energyPair = " << f << ", " << energyPair << endl;
 	
 		// Derivative is of form 2*(Delta)*Grad(Delta)*Weighting
@@ -2170,11 +2082,12 @@ int compute_gradient_F(constant_struct cons, vector_struct vecs, vector<double> 
 	}
 
 	return 0;
-}
+} */
 
-int error_sort(int simplexSize, vector<long double> simplexErrors, vector<int> &errorRankToRow)
+int error_sort(vector<double> simplexErrors, vector<int> &errorRankToRow)
 {
 	// Bubble sort (should be good for nearly sorted lists)
+	int simplexSize = simplexErrors.size();
 	bool swapPerformed = 1;
 	while (swapPerformed == 1)
 	{
@@ -2200,8 +2113,8 @@ int steepest_descent(constant_struct cons, vector_struct vecs, vector<double> in
 {
 	vector<double> gradVector(cons.numTotalParams);
 	vector<double> tempParams(cons.numTotalParams);
-	long double currentF;
-	long double previousF = error_from_trial_point(cons, initialParams, currentParams, 0, vecs, 0);
+	double currentF;
+	double previousF = error_from_trial_point(cons, vecs, initialParams, currentParams, 0);
 	
 	for (int iG=0; iG < gradientIt; iG++)
 	{		
@@ -2231,7 +2144,7 @@ int steepest_descent(constant_struct cons, vector_struct vecs, vector<double> in
 			}
 			//cout << endl;
 			
-			currentF = error_from_trial_point(cons, initialParams, tempParams, 0, vecs, 0);
+			currentF = error_from_trial_point(cons, vecs, initialParams, tempParams, 0);
 			
 			delta = previousF - currentF; // should be >= 0 to continue	
 			//cout << n << ": previousF " << std::setw(12) <<  previousF << "  currentF " << std::setw(12) << currentF;

@@ -1,6 +1,4 @@
 input_parameters.txt
 connectivity_files/connectivity_1,3-DMP_no-pair-fit.txt
 xyz_files/1,3-DMP_CG_ABTT_XYZ/1,3-DMP_ABTT_XYZ_EM_
-xyz_files/1,3-DMP_CG_TABT_XYZ/1,3-DMP_TABT_XYZ_EM_
 energy_profiles/1,3-DMP/1,3-DMP_ABTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
-energy_profiles/1,3-DMP/1,3-DMP_TABT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt

@@ -1,0 +1,4 @@
+input_parameters.txt
+connectivity_files/connectivity_1,4-DMB_no-pair-fit.txt
+xyz_files/1,4-DMB_CG_ABTTT_XYZ/1,4-DMB_ABTTT_XYZ_EM_
+energy_profiles/1,4-DMB/1,4-DMB_ABTTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
