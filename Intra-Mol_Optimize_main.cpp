@@ -73,7 +73,7 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 	
 	// Restraining params to default values
 	cons.resToZero = 0;
-	cons.dihedralK = 0.0;
+	cons.rbK = 0.0;
 	
 	// 
 	int numPhi1 = 0, numPhi2 = 0, numPhi3 = 0;
@@ -173,12 +173,12 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 	if (cons.inputFileString == "input_files_EC.txt") {
 		cons.resToZero = 1;
 		cons.numConfigs = 869;
-		cons.dihedralK = 1.0E-6;
+		cons.rbK = 1.0E-6;
 	}
 	if (cons.inputFileString == "input_files_PC.txt") {
 		cons.resToZero = 1;
 		cons.numConfigs = 2976;
-		cons.dihedralK = 1.0E-6;
+		cons.rbK = 1.0E-6;
 	}
 	
 	// Connectivity data sizes
@@ -206,7 +206,7 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 	
 	// Resize outer (i_s) loop of vector<vector> types
 	vecs.xyzData.resize(cons.numPhiSurfaces);	
-	vecs.energyData.resize(cons.numPhiSurfaces);	
+	vecs.dftData.resize(cons.numPhiSurfaces);	
 	vecs.energyWeighting.resize(cons.numPhiSurfaces);	
 	vecs.uConst.resize(cons.numPhiSurfaces);	
 	
@@ -215,12 +215,13 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 	vecs.bondData.resize(cons.numPhiSurfaces);	
 	vecs.angleData.resize(cons.numPhiSurfaces);	
 	vecs.dihedralData.resize(cons.numPhiSurfaces);	
-	vecs.improperData.resize(cons.numPhiSurfaces);	
-	
+	vecs.improperData.resize(cons.numPhiSurfaces);		
 	vecs.pairData.resize(cons.numPhiSurfaces);	
 	
 	vecs.cosPsiData.resize(cons.numPhiSurfaces);	
 	vecs.pairSepData.resize(cons.numPhiSurfaces);	
+	
+	vecs.energyDelta.resize(cons.numPhiSurfaces);
 
 	vecs.bondSepMat.resize(cons.numPhiSurfaces);	
 	vecs.rijMatrix.resize(cons.numPhiSurfaces);	
@@ -263,7 +264,7 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 	cons.sigmaStep = 0.0002;
 	cons.epsilonStep = 0.001;
 	
-	cons.sigmaGradFactor = 0.01;
+	cons.sigmaGradFactor = 1.0;
 		
 	return 0;
 }
@@ -296,7 +297,7 @@ int main(int argc, char *argv[])
 	cons.numTotalParams = currentParams.uShift.size() + currentParams.rbCoeff.size() + currentParams.ljSigma.size()*2;
 	
 	cout << "Starting parameters\n";
-	print_params_console(cons, currentParams);
+	print_params_console(currentParams);
 	
 	srand(time(NULL));
 	
@@ -306,10 +307,9 @@ int main(int argc, char *argv[])
 	
 	downhill_simplex(cons, vecs, initialParams, currentParams, simplexIt);
 	
-	//conjugate_gradient(cons, vecs, initialParams, currentParams, downhillIt);
+	conjugate_gradient(cons, vecs, initialParams, currentParams, downhillIt);
 	
 	// ---------------------------------------------------------------------------------------------------------
-	
 	// Write best energy
 	error_from_trial_point(cons, vecs, initialParams, currentParams, 1);
 	
@@ -377,8 +377,6 @@ int simulated_annealing(constant_struct cons, vector_struct vecs, fitting_param_
 	std::default_random_engine generator;
 	std::normal_distribution<double> distribution(0.0,1.0);
 	
-	int numDihedralParams = currentParams.totalUniqueDihedrals*(cons.nRBfit-1);
-	
 	for (int iT=0; iT < annealIt; iT++) {
 		//
 		toPrint = (iT%printFreq == 0);
@@ -397,14 +395,14 @@ int simulated_annealing(constant_struct cons, vector_struct vecs, fitting_param_
 				+ normalStep*sqrt(temperature/cons.vTempInitial)*cons.dihedralStep;
 		}
 		
-		for (int p=0; p < numDihedralParams; p++) {
+		for (int p=0; p < oldParams.rbCoeff.size(); p++) {
 			//
 			double normalStep = distribution(generator);			
 			annealParams.rbCoeff[p] = oldParams.rbCoeff[p] 
 				+ normalStep*sqrt(temperature/cons.vTempInitial)*cons.dihedralStep;
 			//cout << annealParams.rbCoeff[p] << endl;
 		}
-		for (int pair=0; pair < currentParams.totalUniquePairs; pair++) {
+		for (int pair=0; pair < oldParams.ljEps.size(); pair++) {
 			//
 			annealParams.ljSigma[pair] = std::abs(oldParams.ljSigma[pair] 
 				+ cons.sigmaStep*sqrt(temperature/cons.vTempInitial)*distribution(generator));
@@ -431,7 +429,7 @@ int simulated_annealing(constant_struct cons, vector_struct vecs, fitting_param_
 		if (aProb > (rand()/double(RAND_MAX))) {
 			if (toPrint) {
 				cout << "Accepting these params.\n";
-				print_params_console(cons, annealParams);
+				print_params_console(annealParams);
 			}
 			oldParams = annealParams;
 		}
@@ -444,34 +442,6 @@ int simulated_annealing(constant_struct cons, vector_struct vecs, fitting_param_
 	// Update final parameters
 	currentParams = oldParams;
 	
-	return 0;
-}
-
-int print_params_console(constant_struct &cons, fitting_param_struct &printParams) 
-{
-	int numDihedralParams = printParams.totalUniqueDihedrals*(cons.nRBfit-1);
-	
-	for (int i_s=0; i_s < cons.numPhiSurfaces; i_s++) {
-		cout << std::setprecision(6) << std::setw(10) << printParams.uShift[i_s];
-	}
-	cout << "  ";
-	for (int p=0; p < numDihedralParams; p++) {
-		cout << std::setprecision(6) << std::setw(10) << printParams.rbCoeff[p];	
-	}
-	cout << "  ";
-	for (int pair=0; pair < printParams.totalUniquePairs; pair++) {
-		cout << std::setprecision(6) << std::setw(10) << printParams.ljSigma[pair];	
-		cout << std::setprecision(6) << std::setw(10) << printParams.ljEps[pair];
-	}
-	cout << endl;
-	return 0;
-}
-
-int print_simplex_console(constant_struct &cons, simplex_struct &printSim)
-{
-	for (int row=0; row<printSim.plex.size(); row++) {
-		print_params_console(cons, printSim.plex[row]);	
-	}	
 	return 0;
 }
 
@@ -488,7 +458,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, fitting_param_str
 	// Create simplex
 	simplex_struct sim;
 	
-	// Choose specially adapted parameters 
+	// Choose parameters 
 	if (cons.useAdaptiveNelderMead) { 
 		// My parameters
 		sim.nmReflect = 1.0;
@@ -509,11 +479,11 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, fitting_param_str
 	for (int row=0; row<simpSize; row++) {
 		sim.plex[row] = currentParams; 
 	}
-	sim.initializeSimplex();
+	sim.plexInitialize();
 	
 	// Print starting simplex
 	cout << "--- INITIAL SIMPLEX ---\n";
-	print_simplex_console(cons, sim);
+	print_simplex_console(sim);
 	
 	// Analyse simplex and fill simplexErrors
 	for (int row=0; row<simpSize; row++) {
@@ -543,7 +513,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, fitting_param_str
 			if (simplexIt > 0) {
 				// Update currentParams array
 				cout << "\n Best params from simplex:\n";			
-				print_params_console(cons, sim.plex[bestRow]);	
+				print_params_console(sim.plex[bestRow]);	
 				currentParams = sim.plex[bestRow];					
 			}
 			return 0;		
@@ -648,7 +618,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, fitting_param_str
 		}
 		// Output new simplex
 		if (toPrint) {
-			print_simplex_console(cons, sim);
+			print_simplex_console(sim);
 		}
 	} // Iteration loop
 	
@@ -663,146 +633,119 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, fitting_param_str
 	return 0;
 }  
 
-/*
-int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int gradientIt)
+int conjugate_gradient(constant_struct cons, vector_struct vecs, fitting_param_struct initialParams, 
+	fitting_param_struct &currentParams, int gradientIt)
 {
 	int printFreq = 100; // Print every printFreq steps
 	cout << "\nPerforming " << gradientIt << " conjugate gradient iteraitons\n\n";
 	
-	// Gradient and conjugate direction vectors
-	vector<double> gradVector(cons.numTotalParams);
-	vector<double> gradVectorNew(cons.numTotalParams);
-	vector<double> cgVector(cons.numTotalParams);
-	vector<double> cgVectorNew(cons.numTotalParams);
+	// Initialize gradient param struct
+	fitting_param_struct gradVector = currentParams;
+	compute_gradient_F(cons, vecs, initialParams, currentParams, gradVector);	
+	fitting_param_struct gradVectorNew = gradVector;
+	fitting_param_struct gradDelta = gradVector;
+	fitting_param_struct cgVector = gradVector;
+	fitting_param_struct cgVectorNew = gradVector;
 	
-	vector<double> tempParams(cons.numTotalParams);
+	fitting_param_struct tempParams = currentParams;
 	
+	// Do initial steepest descent step with line search
 	double currentF;
 	double previousF = error_from_trial_point(cons, vecs, initialParams, currentParams, 0);
 	
-	ofstream cgStream;
-	cgStream.precision(12);
-	cgStream.open("cg_energy.txt");
-	
-	// Do initial steepest descent step with full line search
-	compute_gradient_F(cons, vecs, initialParams, currentParams, gradVector);	
-	
-	double alpha = 0.1, tau = 0.4; // Starting step size and reduction factor
+	double alpha = 0.001, tau = 0.5; // Starting step size and reduction factor
 	double currentBestAlpha = alpha;
 		
-	const int nMax = 45; // Maximum number of iterations in line search
+	const int nMax = 50; // Maximum number of iterations in line search
 	double lineSearchF[nMax];
 	double currentBestF = previousF;
 		
-	// Perform line search
-	for (int n=0; n<nMax; n++)
-	{
-		for (int col=0; col<(cons.numTotalParams); col++)
-			tempParams[col] = currentParams[col] - alpha*gradVector[col];
+	// Perform initial line search
+	for (int n=0; n<nMax; n++) {
+		param_linear_combine(tempParams, currentParams, gradVector, 1.0, -alpha);
 		
 		// Write corresponding value of F
 		lineSearchF[n] = error_from_trial_point(cons, vecs, initialParams, tempParams, 0);
 		
-		if (lineSearchF[n] < currentBestF)
-		{
+		if (lineSearchF[n] < currentBestF) {
 			currentBestF = lineSearchF[n];
 			currentBestAlpha = alpha;
 		}
-		
 		alpha *= tau;
 	}
 	
-	for (int col=0; col<cons.numTotalParams; col++)
-	{
-		cgVector[col] = gradVector[col];
-		currentParams[col] -= currentBestAlpha*gradVector[col];
-	}		
-		
+	cgVector = gradVector;
+	param_linear_combine(currentParams, currentParams, gradVector, 1.0, -currentBestAlpha);
+
 	previousF = error_from_trial_point(cons, vecs, initialParams, currentParams, 0);
 	
-	// Do modified conjugate gradient steps -----------------------------------------------------------------------------
-	for (int iG=0; iG < gradientIt; iG++)
-	{
+	// Do modified conjugate gradient steps ----------------------------------------------------------------------------
+	for (int iG=0; iG < gradientIt; iG++) {
+		//
 		bool toPrint = (iG%printFreq == 0);
-		
+			
 		// Get gradient corresponding to x_n, write to gradVectorNew
 		compute_gradient_F(cons, vecs, initialParams, currentParams, gradVectorNew);	
 		
 		if (toPrint) {
-			cout << "\nNew grad: ";
-			for (int row=0; row<(cons.numTotalParams); row++)
-				cout << std::setprecision(8) << std::setw(11) << gradVectorNew[row] << " ";
-			cout << endl << endl;
+			cout << "\nGradient:\n";
+			print_params_console(gradVectorNew);
 		}
 		
 		// Calculate dot-products needed for beta and theta coefficients
-		double dotProd1 = 0.0, dotProd2 = 0.0, dotProd3 = 0.0;
-		
-		for (int row=0; row<(cons.numTotalParams); row++) {
-			dotProd1 += gradVectorNew[row]*(gradVectorNew[row]-gradVector[row]);
-			dotProd2 += gradVector[row]*gradVector[row];
-			dotProd3 += gradVectorNew[row]*cgVector[row];
-		}
-		
-		
+		param_linear_combine(gradDelta, gradVectorNew, gradVector, 1.0, -1.0);
+		double dotProd1 = param_scalar_product(gradVectorNew, gradDelta);
+		double dotProd2 = param_scalar_product(gradVector, gradVector);
+		double dotProd3 = param_scalar_product(gradVectorNew, cgVector);
+			
 		// Calculate coefficient beta (Polak-Ribiere)
 		double betaPR = std::max(dotProd1/dotProd2, 0.0);
-		//cout << "betaPR = " << betaPR << endl << endl;
+		//cout << "betaPR = " << betaPR << endl;
 		
 		// Calculate coefficient theta (Zhang)
 		double thetaZ = dotProd3/dotProd2;	
+		//cout << "thetaZ = " << thetaZ << endl << endl;
 		
 		// Update conjugate direction, advance vectors n -> n+1
-		double magCgVec = 0.0;
-		for (int row=0; row<(cons.numTotalParams); row++)
-		{
-			cgVectorNew[row] = gradVectorNew[row] + betaPR*cgVector[row] - thetaZ*(gradVectorNew[row]-gradVector[row]);
-			cgVector[row] = cgVectorNew[row];
-			gradVector[row] = gradVectorNew[row];
-			magCgVec += cgVector[row]*cgVector[row];
-		}
+		param_linear_combine(cgVectorNew, gradVectorNew, cgVector, -1.0, betaPR);
+		param_linear_combine(cgVectorNew, cgVectorNew, gradDelta, 1.0, -thetaZ);
+		gradVector = gradVectorNew;
+		cgVector = cgVectorNew;
+		double magCgVec = param_scalar_product(cgVector, cgVector);
 		
 		// Perform line search in conjugate direction
 		int n=0;
-		alpha = 0.125;
-		double deltaZ = 0.0001;
-		double deltaCG = -1.0;
+		alpha = 0.001;
+		double deltaZ = 0.001;
+		double deltaCG = -1.0; // Set negative for start of while loop
 		while ( (n<=nMax) && (deltaCG <= 0.0) )
 		{
 			// Get updated params from x_i+1 = x_i - alpha*d_i+1
-			for (int col=0; col<(cons.numTotalParams); col++)
-				tempParams[col] = currentParams[col] - alpha*cgVectorNew[col];
+			param_linear_combine(tempParams, currentParams, cgVectorNew, 1.0, alpha);
 
-			currentF = error_from_trial_point(cons, vecs, initialParams, tempParams, 0);
-			
+			currentF = error_from_trial_point(cons, vecs, initialParams, tempParams, 0);	
 			// Test Armijo-type condition 
-			
 			deltaCG = previousF - currentF - deltaZ*alpha*alpha*magCgVec; // should be >= 0 to continue
-			
-			//cout << alpha << ": previousF " << std::setw(10) << previousF << "  currentF " << std::setw(10) << currentF;
-			//cout << "  delta*alpha^2*d^2" << std::setw(10) << deltaZ*alpha*alpha*magCgVec << "  CGdelta " << std::setw(10) << deltaCG << endl;
-			
+			//cout << alpha << ": previousF " << std::setw(10) << previousF << "  currentF " << currentF;
+			//cout << "  delta*alpha^2*d^2" << std::setw(10) << deltaZ*alpha*alpha*magCgVec;
+			//cout << "  CGdelta " << std::setw(10) << deltaCG << endl;
 			alpha *= tau;
 			n++;
 		}
 		
 		// Overwrite curent parameters
 		previousF = currentF;
-		cgStream << currentF << endl;
+		currentParams = tempParams;
 		
 		if (toPrint) {
 			cout << "Updating parameters, F = " << currentF << endl;
-			for (int col=0; col<(cons.numTotalParams); col++) {
-				currentParams[col] = tempParams[col];
-				cout << std::setprecision(8) << std::setw(11)  << currentParams[col] << " ";
-			}	
-			cout << endl;
+			print_params_console(currentParams);
 		}
 	
 	}		
 	
 	return 0;
-}  */
+}  
 
 int connectivity_read(constant_struct &cons, vector_struct &vecs, int i_s)
 {
@@ -858,7 +801,7 @@ int connectivity_read(constant_struct &cons, vector_struct &vecs, int i_s)
 	
 	// Resize inner loop of vector<vector> types for this molecule and energy surface
 	vecs.xyzData[i_s].resize(cons.numConfigs*vecs.molSize[i_s].atoms*3);	
-	vecs.energyData[i_s].resize(cons.numConfigs);
+	vecs.dftData[i_s].resize(cons.numConfigs);
 	vecs.energyWeighting[i_s].resize(cons.numConfigs);
 	vecs.uConst[i_s].resize(cons.numConfigs);
 	
@@ -874,6 +817,7 @@ int connectivity_read(constant_struct &cons, vector_struct &vecs, int i_s)
 		vecs.pairData[i_s].resize(vecs.molSize[i_s].pairs*cons.pairDataSize);
 	}
 	
+	vecs.energyDelta[i_s].resize(cons.numConfigs);		
 	vecs.bondSepMat[i_s].resize(vecs.molSize[i_s].atoms*vecs.molSize[i_s].atoms);
 	vecs.rijMatrix[i_s].resize(vecs.molSize[i_s].atoms*vecs.molSize[i_s].atoms);
 	vecs.sigmaMatrix[i_s].resize(vecs.molSize[i_s].atoms*vecs.molSize[i_s].atoms);
@@ -1327,10 +1271,10 @@ int energy_read(constant_struct &cons, vector_struct &vecs, int i_s)
 	}
 	
 	for (int i_u=0; i_u<cons.numConfigs; i_u++) {
-		energyStream >> vecs.energyData[i_s][i_u];
+		energyStream >> vecs.dftData[i_s][i_u];
 		// Apply Boltzmann weighting 
-		vecs.energyWeighting[i_s][i_u] *= exp(-vecs.energyData[i_s][i_u]/cons.KT); 
-		//cout << "Energy, weighting: " << i_u << " " << vecs.energyData[i_s][i_u] << ", ";
+		vecs.energyWeighting[i_s][i_u] *= exp(-vecs.dftData[i_s][i_u]/cons.KT); 
+		//cout << "Energy, weighting: " << i_u << " " << vecs.dftData[i_s][i_u] << ", ";
 		//cout << vecs.energyWeighting[i_s][i_u] << endl;
 	}
 	
@@ -1362,7 +1306,7 @@ int energy_read(constant_struct &cons, vector_struct &vecs, int i_s)
 					
 						if (vecs.integrationRule[i_section] == 1) {
 							double intCoeff = vecs.simpsonCoeffsPhi1[i_m]*vecs.simpsonCoeffsPhi2[i_n];					
-							sectionIntegrals[i_section] += intCoeff*exp(-vecs.energyData[f]/cons.kTBoltzIntegral);
+							sectionIntegrals[i_section] += intCoeff*exp(-vecs.dftData[f]/cons.kTBoltzIntegral);
 						}
 					}	
 				}
@@ -1451,7 +1395,7 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 			if (vecs.dihedralIndexMapping[dType] < 0) {	
 				// Index dType maps to this dihedral number in fitting
 				vecs.dihedralIndexMapping[dType] = initialParams.totalUniqueDihedrals++;	
-				initialParams.dihedralTypeCount.push_back(1);	// First of this type			
+				initialParams.rbTypeCount.push_back(1);	// First of this type			
 				cout << "Type " << dType << " is new dihedral type " << initialParams.totalUniqueDihedrals << endl;		
 				// Add coeffs for new type
 				for (int cosExp=1; cosExp < cons.nRBfit; cosExp++) {
@@ -1461,7 +1405,7 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 			}
 			else {
 				// If not a new type, simply add one to count and average coeffs
-				size_t count = ++initialParams.dihedralTypeCount[vecs.dihedralIndexMapping[dType]];	
+				size_t count = ++initialParams.rbTypeCount[vecs.dihedralIndexMapping[dType]];	
 				
 				for (int cosExp=1; cosExp < cons.nRBfit; cosExp++) {
 					
@@ -1647,7 +1591,7 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 						if (vecs.pairIndexMapping[pairType] < 0) {	
 							// Index pairType maps to this pair number in fitting
 							vecs.pairIndexMapping[pairType] = initialParams.totalUniquePairs++;	
-							initialParams.pairTypeCount.push_back(1);	// First of this type			
+							initialParams.ljTypeCount.push_back(1);	// First of this type			
 				
 							// Add sigma and eps
 							initialParams.ljSigma.push_back(newSigma);
@@ -1657,7 +1601,7 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 						else {
 							// If not a new type, simply add one to count and average sigma/eps
 							int mapping = vecs.pairIndexMapping[pairType];
-							size_t count = ++initialParams.pairTypeCount[vecs.pairIndexMapping[pairType]];	
+							size_t count = ++initialParams.ljTypeCount[vecs.pairIndexMapping[pairType]];	
 							
 							// Take average of this and all the others of this type
 							initialParams.ljSigma[mapping] = 
@@ -1697,9 +1641,9 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 			
 				vecs.rijMatrix[i_s][m1] = r_ij; // Just for printing
 			
-				// Coulomb
-				// 138.9355 converts coulomb energy |q||q|/r[nm] to kJ/mol
-				double energyPairQQ = 138.9355*vecs.qqMatrix[i_s][m1]/r_ij;
+				// Coulomb energy,
+				// 138.9355 converts q[e]q[e]/r[nm] to coulomb energy in kJ/mol
+				double energyPairQQ = 138.93546*vecs.qqMatrix[i_s][m1]/r_ij;
 				vecs.uConst[i_s][i_f].uQQ += energyPairQQ;
 			
 				if (fitPair == 1) {
@@ -1744,7 +1688,7 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 	return 0;
 }
 
-double error_from_trial_point(constant_struct cons, vector_struct vecs, fitting_param_struct initialParams, fitting_param_struct trialParams, bool toWrite)
+double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting_param_struct initialParams, fitting_param_struct trialParams, bool toWrite)
 {
 	ofstream energyMD;
 	ofstream energyDist;
@@ -1761,7 +1705,7 @@ double error_from_trial_point(constant_struct cons, vector_struct vecs, fitting_
 		energyMD.open("energyMD.txt");
 		energyDist.open("energyDist.txt");
 	}
-	//print_params_console(cons, trialParams);
+	//print_params_console(trialParams);
 	
 	// Total sum of all contributions to objective function (F) per surface
 	vector<double> sumF(cons.numPhiSurfaces,0.0);
@@ -1780,14 +1724,14 @@ double error_from_trial_point(constant_struct cons, vector_struct vecs, fitting_
 			// Get diherdal type
 			int dType = int(round(vecs.dihedralData[i_s][d*cons.dihedralDataSize + 4]));
 			// Map dihedral type to dihedral ID
-			int dihedralID = vecs.dihedralIndexMapping[dType];			
-			//cout << "dType, dID " << dType << " " << dihedralID << endl;
+			int rbID = vecs.dihedralIndexMapping[dType];			
+			//cout << "dType, dID " << dType << " " << rbID << endl;
 			if (dType > 0) {
 				//
 				for (int i_f=0; i_f<cons.numConfigs; i_f++) {
 					// This loop order is less efficient, but makes it easier to access cosPsiData
 					for (int cosExp=1; cosExp<cons.nRBfit; cosExp++) {
-						double coeff = trialParams.rbCoeff[dihedralID*(cons.nRBfit-1)+(cosExp-1)];
+						double coeff = trialParams.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)];
 						double cosPsiPow = vecs.cosPsiData[i_s][i_psiPow++];
 						//cout << "d, i_f, coeff, cosPsiPow " << d << ", " << i_f <<;
 						//cout << ", " << coeff << ", " << cosPsiPow << endl; 	
@@ -1795,14 +1739,14 @@ double error_from_trial_point(constant_struct cons, vector_struct vecs, fitting_
 					}
 				}	
 				for (int cosExp=1; cosExp<cons.nRBfit; cosExp++) {	
-					double coeff = trialParams.rbCoeff[dihedralID*(cons.nRBfit-1)+(cosExp-1)];
-					// Restraint term added directly to sumF
+					double coeff = trialParams.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)];
+					// Dihedral coeff restraint term added directly to sumF
 					if (cons.resToZero == 1) {
-						sumF[i_s] += cons.dihedralK*coeff*coeff;
+						sumF[i_s] += cons.rbK*coeff*coeff;
 					}
 					else {
-						double coeffDelta = coeff-initialParams.rbCoeff[dihedralID*(cons.nRBfit-1)+(cosExp-1)];
-						sumF[i_s] += cons.dihedralK*coeffDelta*coeffDelta*cons.numConfigs;
+						double coeffDelta = coeff-initialParams.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)];
+						sumF[i_s] += cons.rbK*coeffDelta*coeffDelta*cons.numConfigs;
 					}
 				}				
 			}
@@ -1829,9 +1773,9 @@ double error_from_trial_point(constant_struct cons, vector_struct vecs, fitting_
 					//cout << pair << ", " << sigma << ", " << epsilon <<;
 					//cout << ", " << r_ij << ", " << energyPair[i_s][i_f] << endl;
 				} 
-				// Restraint term added directly to sumF
+				// LJ restraint term added directly to F
 				double epsDelta = trialParams.ljEps[pairID] - initialParams.ljEps[pairID];
-				sumF[i_s] += cons.epsK*epsDelta*epsDelta*double(cons.numConfigs)/double(trialParams.pairTypeCount[pairID]);
+				sumF[i_s] += cons.epsK*epsDelta*epsDelta*double(cons.numConfigs)/double(trialParams.ljTypeCount[pairID]);
 			}	
 		}	
 		
@@ -1842,8 +1786,8 @@ double error_from_trial_point(constant_struct cons, vector_struct vecs, fitting_
 				+ energyPair[i_s][i_f] + energyDihedral[i_s][i_f];
 						
 			// F += weighting*(delta*U)^2 
-			double uDelta = vecs.energyData[i_s][i_f]-energyTotal[i_s][i_f];
-			sumF[i_s] += uDelta*uDelta*vecs.energyWeighting[i_s][i_f];
+			vecs.energyDelta[i_s][i_f] = energyTotal[i_s][i_f]-vecs.dftData[i_s][i_f];
+			sumF[i_s] += vecs.energyDelta[i_s][i_f]*vecs.energyDelta[i_s][i_f]*vecs.energyWeighting[i_s][i_f];
 		
 			// Write to file
 			if (toWrite == 1) {
@@ -1895,6 +1839,155 @@ double error_from_trial_point(constant_struct cons, vector_struct vecs, fitting_
 	} */
 	
 	return totalSumF;
+}
+
+int compute_gradient_F(constant_struct cons, vector_struct vecs, fitting_param_struct initialParams, 
+fitting_param_struct currentParams, fitting_param_struct &grad)
+{
+	grad.zero_params();
+	
+	// Run error_from_trial_point to fill vecs.energyDelta (U_DFT - U_MD)
+	error_from_trial_point(cons, vecs, initialParams, currentParams, 0);
+	
+	// Loop over energy surfaces
+	for (int i_s=0; i_s<cons.numPhiSurfaces; i_s++) {
+		//
+		int i_psiPow = 0, i_pairSep = 0;
+				
+		// Loop over all dihedrals
+		for (int d=0; d < vecs.molSize[i_s].dihedrals; d++) {
+			// Get diherdal type
+			int dType = int(round(vecs.dihedralData[i_s][d*cons.dihedralDataSize + 4]));
+			// Map dihedral type to dihedral ID
+			int rbID = vecs.dihedralIndexMapping[dType];			
+			//cout << "dType, dID " << dType << " " << rbID << endl;
+			if (dType > 0) {
+				//
+				for (int i_f=0; i_f < cons.numConfigs; i_f++) {
+					// Weighted delta 
+					double wd = vecs.energyWeighting[i_s][i_f]*vecs.energyDelta[i_s][i_f];
+					for (int cosExp=1; cosExp < cons.nRBfit; cosExp++) {					
+						grad.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)] += 2*wd*vecs.cosPsiData[i_s][i_psiPow++];
+					}
+				}	
+				// Dihedral coeff restraint term
+				for (int cosExp=1; cosExp < cons.nRBfit; cosExp++) {
+					//
+					if (cons.resToZero == 1) {
+						double rbDelta = currentParams.rbCoeff[rbID];
+						grad.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)] += 
+							2*cons.rbK*rbDelta*double(cons.numConfigs)/double(currentParams.rbTypeCount[rbID]);	
+					}
+					else {
+						double rbDelta = currentParams.rbCoeff[rbID] - initialParams.rbCoeff[rbID];
+						grad.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)] += 
+							2*cons.rbK*rbDelta*double(cons.numConfigs)/double(currentParams.rbTypeCount[rbID]);	
+					}
+				}				
+			}
+		}
+		// Calculate improper dihedral energy
+			
+		// Calculate pair energy (LJ only)
+		for (int pair=0; pair < vecs.molSize[i_s].pairs; pair++) {		
+			// Get pair type
+			int pairType = int(round(vecs.pairData[i_s][pair*cons.pairDataSize + 2]));
+				
+			if (pairType > 0) {
+				// Map pair type to pair ID
+				int ljID = vecs.pairIndexMapping[pairType];
+				
+				for (int i_f=0; i_f<cons.numConfigs; i_f++) {	
+					double r_ij = vecs.pairSepData[i_s][i_pairSep++];
+					double sigma = currentParams.ljSigma[ljID];
+					double epsilon = currentParams.ljEps[ljID];
+					double LJ6 = pow(sigma/r_ij, 6);
+					
+					// Weighted delta
+					double wd = vecs.energyWeighting[i_s][i_f]*vecs.energyDelta[i_s][i_f];					
+					grad.ljSigma[ljID] += 2*wd*4.0*epsilon*(LJ6*LJ6*12 - LJ6*6)/sigma;
+					grad.ljEps[ljID] += 2*wd*4.0*(LJ6*LJ6-LJ6);
+				} 
+				// LJ restraint term added directly to F
+				double epsDelta = currentParams.ljEps[ljID]-initialParams.ljEps[ljID];
+				grad.ljEps[ljID] += 2*cons.epsK*epsDelta*double(cons.numConfigs)/double(currentParams.ljTypeCount[ljID]);				
+			}	
+		}	
+		
+		for (int i_f=0; i_f<cons.numConfigs; i_f++) {	
+			grad.uShift[i_s] += 2*vecs.energyWeighting[i_s][i_f]*vecs.energyDelta[i_s][i_f];
+		}
+	} // i_s loop
+	
+	// Apply scaling factor for sigma gradient (which has different units)
+	for (int k=0; k < grad.ljSigma.size(); k++) {
+		grad.ljSigma[k] *= cons.sigmaGradFactor;
+	}
+	
+	//cout << "Current:\n";
+	//print_params_console(currentParams);
+	//cout << "Grad:\n";
+	//print_params_console(grad);
+
+	return 0;
+} 
+
+int param_linear_combine(fitting_param_struct &outParams, fitting_param_struct aParams, fitting_param_struct bParams,  
+double a, double b)
+{
+	for (int i=0; i < outParams.uShift.size(); i++) {
+		outParams.uShift[i] = a*aParams.uShift[i] + b*bParams.uShift[i];
+	}
+	for (int j=0; j < outParams.rbCoeff.size(); j++) {
+		outParams.rbCoeff[j] = a*aParams.rbCoeff[j] + b*bParams.rbCoeff[j];
+	}
+	for (int k=0; k < outParams.ljEps.size(); k++) {
+		outParams.ljSigma[k] = a*aParams.ljSigma[k] + b*bParams.ljSigma[k];
+		outParams.ljEps[k] = a*aParams.ljEps[k] + b*bParams.ljEps[k];
+	}
+	return 0;
+}
+
+double param_scalar_product(fitting_param_struct aParams, fitting_param_struct bParams)
+{
+	double product = 0.0;
+	
+	for (int i=0; i < aParams.uShift.size(); i++) {
+		product += aParams.uShift[i]*bParams.uShift[i];
+	}
+	for (int j=0; j < aParams.rbCoeff.size(); j++) {
+		product += aParams.rbCoeff[j]*bParams.rbCoeff[j];
+	}
+	for (int k=0; k < aParams.ljEps.size(); k++) {
+		product += aParams.ljSigma[k]*bParams.ljSigma[k];
+		product += aParams.ljEps[k]*bParams.ljEps[k];
+	}
+	
+	return product;
+}
+
+int error_sort(vector<double> simplexErrors, vector<int> &errorRankToRow)
+{
+	// Bubble sort (should be good for nearly sorted lists)
+	int simplexSize = simplexErrors.size();
+	bool swapPerformed = 1;
+	while (swapPerformed == 1)
+	{
+		swapPerformed = 0;
+		for (int i=0; i<(simplexSize-1); i++)
+		{
+			// Compare errors of point i and i+1
+			if ( simplexErrors[ errorRankToRow[i] ] > simplexErrors[ errorRankToRow[i+1] ] )
+			{
+				int temp = errorRankToRow[i];
+				errorRankToRow[i] = errorRankToRow[i+1];
+				errorRankToRow[i+1] = temp;
+				swapPerformed = 1;
+			}
+		}
+	}
+	
+	return 0;
 }
 
 int compute_boltzmann_integrals(constant_struct cons, vector_struct vecs, vector<double> energyTotal, vector<double> &confIntegralsMD, bool toPrint)
@@ -1957,214 +2050,31 @@ int compute_boltzmann_integrals(constant_struct cons, vector_struct vecs, vector
 	}
 	return 0;
 }
-/*
-int compute_gradient_F(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> currentParams, vector<double> &gradVector)
-{
-	// Ensure grad vector is zero
-	for (int col=0; col<cons.numTotalParams; col++)
-	{
-		gradVector[col] = 0.0;
-	}
-	
-	// Loop over configs
-	for (int f=0; f<cons.numConfigs; f++)
-	{
-		// Calculate dihedral energy for simplex 'd' and xyz config 'f'
-		double energyDihedral = 0.0, energyPair = 0.0, gradSigmaPair = 0.0, gradEpsPair = 0.0;
-		int dd=0;
-		
-		// Calculate dihedral energy
-		for (int d=0; d<cons.size[3]; d++)
-		{
-			// Cosine(psi) for this dihedral
-			double cosPsiPow = 1.0; // Start at cosPsi^0
-			double coeff = 0.0;
-			
-			// Get diherdal type
-			int dType = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 4]));
-			
-			// Type 0 dihedrals are the ones not varying during the fit
-			if (dType > 0)
-			{	
-				double cosPsi = vecs.cosPsiData[f*cons.numDihedralFit+dd];
-				dd++;
-				
-				for (int rb=0; rb<cons.nRBfit; rb++)
-				{
-					// Get coefficient
-					if ((dType > 1) && (rb == 0))
-						coeff = 0.0;
-					else
-					{
-						coeff = currentParams[(dType-1)*(cons.nRBfit-1) + rb];
-						//cout << "Coeff: " << f << ", " << ((dType-1)*(cons.nRBfit-1) + rb) << ", " << coeff << endl;
-					}				
-					energyDihedral += cosPsiPow*coeff;
-					
-					// Raise cosPsiPow to the next power
-					cosPsiPow *= cosPsi;
-				}
-			}
-		}
-		
-		// Calculate pair energy
-		if (cons.size[5] != 0)
-		{
-			double sigmaPair = currentParams[cons.numDihedralParams];
-			double epsilonPair = currentParams[cons.numDihedralParams+1];
-			
-			for (int pair=0; pair<cons.size[5]; pair++)
-			{
-				double r = vecs.pairSepData[f*cons.size[5] + pair];
-				double LJ6 = pow(sigmaPair/r, 6);
-			
-				energyPair += 4.0*epsilonPair*(LJ6*LJ6-LJ6);
-				gradSigmaPair += 4.0*epsilonPair*( LJ6*LJ6*12 - LJ6*6)/sigmaPair; 	// Derivative wrt sigma
-				gradEpsPair += 4.0*(LJ6*LJ6-LJ6);									// Derivative wrt epsilon			
-			}
-		}
-		
-		// Compare total energy to DFT energy to get delta
-		double energyDelta = vecs.energyData[f] - (vecs.uConst[f] + energyPair + energyDihedral);
-		//cout << "grad) f, energyPair = " << f << ", " << energyPair << endl;
-	
-		// Derivative is of form 2*(Delta)*Grad(Delta)*Weighting
-		double gradWeighting = 2*vecs.energyWeighting[f];
-	
-		// Construct this configuration's contribution to the gradient vector
-		gradVector[0] -= energyDelta*gradWeighting;
-	
-		// Loop over dihedrals again now that we have deltaU and weighting factors
-		dd = 0;
-		for (int d=0; d<cons.size[3]; d++)
-		{
-			int dType = int(round(vecs.dihedralData[d*cons.dihedralDataSize + 4]));			
-			if (dType > 0)
-			{	
-				// Start at n=1 term in dihedral potential
-				double cosPsi = vecs.cosPsiData[f*cons.numDihedralFit+dd];
-				dd++;
-				double cosPsiPow = cosPsi; // Start at cosPsi^1
-			
-				for (int rb=1; rb<cons.nRBfit; rb++)
-				{
-					gradVector[(dType-1)*(cons.nRBfit-1) + rb] -= cosPsiPow*energyDelta*gradWeighting;		
-					//cout << "cosPsiPow " << cosPsiPow << endl;
-					//cout << "energyDelta " << energyDelta << endl;
-					//cout << "energyFactor " << energyWeighting << endl;	
-									
-					cosPsiPow *= cosPsi;
-				}
-			}
-		}
-		// Now gradients with respect to sigma and epsilon of pair being fit
-		if (cons.size[5] != 0)
-		{
-			gradVector[cons.numDihedralParams    ] -= cons.sigmaGradFactor*gradSigmaPair*energyDelta*gradWeighting;
-			gradVector[cons.numDihedralParams + 1] -= gradEpsPair*energyDelta*gradWeighting;	
-		}
-	}
-	
-	// Gradients due to constraint terms
-	// Doesn't depend on config, so calculated once and multiplied by numConfigs
-	for (int coeff=1; coeff<cons.numDihedralParams; coeff++) 
-	{
-		if (cons.resToZero == 1)
-			gradVector[coeff] += 2*(cons.dihedralK*cons.numConfigs)*currentParams[coeff];
-		else
-			gradVector[coeff] += 2*(cons.dihedralK*cons.numConfigs)*(currentParams[coeff]-initialParams[coeff]);
-	}	
-	// Epsilon constraint term
-	if (cons.size[5] != 0)
-	{
-		double epsDef = initialParams[cons.numTotalParams-1];
-		gradVector[cons.numTotalParams-1] += 2*(cons.epsK*cons.numConfigs)*(currentParams[cons.numTotalParams-1]-epsDef);	
-	}
 
-	return 0;
-} */
-
-int error_sort(vector<double> simplexErrors, vector<int> &errorRankToRow)
+int print_params_console(fitting_param_struct &printParams) 
 {
-	// Bubble sort (should be good for nearly sorted lists)
-	int simplexSize = simplexErrors.size();
-	bool swapPerformed = 1;
-	while (swapPerformed == 1)
-	{
-		swapPerformed = 0;
-		for (int i=0; i<(simplexSize-1); i++)
-		{
-			// Compare errors of point i and i+1
-			if ( simplexErrors[ errorRankToRow[i] ] > simplexErrors[ errorRankToRow[i+1] ] )
-			{
-				int temp = errorRankToRow[i];
-				errorRankToRow[i] = errorRankToRow[i+1];
-				errorRankToRow[i+1] = temp;
-				swapPerformed = 1;
-			}
-		}
+	for (int i=0; i < printParams.uShift.size(); i++) {
+		printf("%7.5g ", printParams.uShift[i]);
+		//cout << std::setprecision(6) << std::setw(10) << printParams.uShift[i_s];
 	}
-	
+	for (int j=0; j < printParams.rbCoeff.size(); j++) {
+		printf("%7.5g ", printParams.rbCoeff[j]);
+		//cout << std::setprecision(6) << std::setw(10) << printParams.rbCoeff[p];	
+	}
+	for (int k=0; k < printParams.ljEps.size(); k++) {
+		printf("%7.5g ", printParams.ljSigma[k]);
+		printf("%7.5g ", printParams.ljEps[k]);
+		//cout << std::setprecision(6) << std::setw(10) << printParams.ljSigma[pair];	
+		//cout << std::setprecision(6) << std::setw(10) << printParams.ljEps[pair];
+	}
+	cout << endl;
 	return 0;
 }
 
-/* Steepest descent function is not maintained
-int steepest_descent(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int gradientIt)
+int print_simplex_console(simplex_struct &printSim)
 {
-	vector<double> gradVector(cons.numTotalParams);
-	vector<double> tempParams(cons.numTotalParams);
-	double currentF;
-	double previousF = error_from_trial_point(cons, vecs, initialParams, currentParams, 0);
-	
-	for (int iG=0; iG < gradientIt; iG++)
-	{		
-		// Get gradient corresponding to current parameters
-		compute_gradient_F(cons, vecs, initialParams, currentParams, gradVector);	
-		
-		cout << "\nGrad: ";
-		for (int row=0; row<cons.numTotalParams; row++)
-			cout << std::setw(8) << gradVector[row] << " ";
-		cout << endl << endl;
-		
-		// Get ||g||^2
-		double gradMag = 0.0;
-		for (int row=0; row<cons.numTotalParams; row++)
-			gradMag += gradVector[row]*gradVector[row];
-		
-		// Update parameters using a backtracking line search
-		double alpha = 0.1, tau = 0.5, delta = -1.0;
-		int n = 0, maxN = 20;
-		
-		while ( (n<=maxN) && (delta < 0.0) )
-		{
-			for (int col=0; col<cons.numTotalParams; col++)
-			{
-				tempParams[col] = currentParams[col] - alpha*gradVector[col];
-				//cout << tempParams[col] << " ";
-			}
-			//cout << endl;
-			
-			currentF = error_from_trial_point(cons, vecs, initialParams, tempParams, 0);
-			
-			delta = previousF - currentF; // should be >= 0 to continue	
-			//cout << n << ": previousF " << std::setw(12) <<  previousF << "  currentF " << std::setw(12) << currentF;
-			//cout << "  alpha " << alpha << endl;
-			
-			alpha *= tau;
-			n++;
-		}
-		
-		// Overwrite curent parameters
-		previousF = currentF;
-		cout << "Updating parameters, F = " << currentF << endl;
-		
-		for (int col=0; col<cons.numTotalParams; col++)
-		{
-			currentParams[col] = tempParams[col];
-			cout << std::setw(10) << currentParams[col] << " ";
-		}	
-		cout << endl;
-	}
-	
-	return 0;	
-} */
+	for (int row=0; row<printSim.plex.size(); row++) {
+		print_params_console(printSim.plex[row]);	
+	}	
+	return 0;
+}

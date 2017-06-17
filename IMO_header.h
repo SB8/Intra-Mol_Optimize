@@ -42,15 +42,23 @@ typedef struct {
 struct fitting_param_struct {
 	
 	int totalUniqueDihedrals = 0;
-	vector<int> dihedralTypeCount; // How often each type appears
+	vector<int> rbTypeCount; // How often each type appears
 	vector<double> rbCoeff;
 	
 	int totalUniquePairs = 0;
-	vector<int> pairTypeCount;
+	vector<int> ljTypeCount;
 	vector<double> ljSigma;
 	vector<double> ljEps;
 	
 	vector<double> uShift;
+	
+	void zero_params() {
+				
+		std::fill(uShift.begin(), uShift.end(), 0.0);
+		std::fill(rbCoeff.begin(), rbCoeff.end(), 0.0);
+		std::fill(ljEps.begin(), ljEps.end(), 0.0);
+		std::fill(ljSigma.begin(), ljSigma.end(), 0.0);
+	}
 };
 
 struct simplex_struct {
@@ -74,7 +82,7 @@ struct simplex_struct {
 	double nmContra;
 	double nmShrink;
 	
-	void initializeSimplex() {
+	void plexInitialize() {
 		
 		const double factorLJ = 0.01;
 		const double dihedralStep = 0.5;
@@ -110,7 +118,7 @@ struct simplex_struct {
 				plex[row+1].ljSigma[pair] *= (1.0+factorLJ);
 			}
 			else {
-				plex[row+1].ljEps[pair++] /= (1.0+factorLJ);
+				plex[row+1].ljEps[pair++] *= (1.0-factorLJ);
 			}	
 			sigEps = !sigEps;
 		} 
@@ -289,7 +297,7 @@ struct constant_struct {
   
 	bool resToZero;
 	double epsK;
-	double dihedralK;
+	double rbK;
 	
 	bool useBoltzIntRes;
 	double kTBoltzIntegral;
@@ -329,7 +337,7 @@ struct vector_struct {
 	vector<double> confIntegralsDFT;
 	
 	vector<vector<double> > xyzData;
-	vector<vector<double> > energyData;
+	vector<vector<double> > dftData;
 	vector<vector<double> > energyWeighting;
 
 	vector<vector<constant_energy_struct> > uConst;
@@ -349,6 +357,8 @@ struct vector_struct {
 	vector<int> pairIndexMapping;
 	vector<vector<double> > pairSepData;
 	
+	vector<vector<double> > energyDelta;
+	
 	vector<vector<int>    > bondSepMat;
 	vector<vector<double> > rijMatrix;
 	vector<vector<double> > sigmaMatrix;
@@ -367,15 +377,18 @@ int connectivity_process(constant_struct cons, vector_struct &vecs, int i_s);
 int energy_read(constant_struct &cons, vector_struct &vecs, int i_s);
 int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_param_struct &initialParams, int i_s);
 
-int define_initial_simplex(constant_struct cons, vector<double> initialParams, vector<double> &simplex);
-double error_from_trial_point(constant_struct cons, vector_struct vecs, fitting_param_struct initialParams, fitting_param_struct trialParams, bool toWrite);
+double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting_param_struct initialParams, fitting_param_struct trialParams, bool toWrite);
 int compute_boltzmann_integrals(constant_struct cons, vector_struct vecs, vector<double> energyTotal, vector<double> &confIntegralsMD, bool toPrint);
-int compute_gradient_F(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> currentParams, vector<double> &gradVector);
+int compute_gradient_F(constant_struct cons, vector_struct vecs, fitting_param_struct initialParams, fitting_param_struct currentParams, fitting_param_struct &grad);
 
 int simulated_annealing(constant_struct cons, vector_struct vecs, fitting_param_struct &initialParams, fitting_param_struct &currentParams, int annealIt);
 int downhill_simplex(constant_struct cons, vector_struct vecs, fitting_param_struct &initialParams, fitting_param_struct &currentParams, int simplexIt);
 int error_sort(vector<double> simplexErrors, vector<int> &errorRankToRow);
 //int steepest_descent(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int gradientIt);
-//int conjugate_gradient(constant_struct cons, vector_struct vecs, vector<double> initialParams, vector<double> &currentParams, int gradientIt);
+int conjugate_gradient(constant_struct cons, vector_struct vecs, fitting_param_struct initialParams, fitting_param_struct &currentParams, int gradientIt);
 
-int print_params_console(constant_struct &cons, fitting_param_struct &printParams);
+int param_linear_combine(fitting_param_struct &outParams, fitting_param_struct aParams, fitting_param_struct bParams, double a, double b);
+double param_scalar_product(fitting_param_struct aParams, fitting_param_struct bParams);
+
+int print_params_console(fitting_param_struct &printParams);
+int print_simplex_console(simplex_struct &printSim);
