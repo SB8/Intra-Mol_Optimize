@@ -41,15 +41,16 @@ typedef struct {
 
 struct fitting_param_struct {
 	
-	int totalUniqueDihedrals = 0;
-	vector<int> rbTypeCount; // How often each type appears
+	vector<int> dihedralIndexMapping;
+	vector<int> rbTypeCount; 
 	vector<double> rbCoeff;
 	
-	int totalUniquePairs = 0;
+	vector<int> pairIndexMapping;	
 	vector<int> ljTypeCount;
 	vector<double> ljSigma;
 	vector<double> ljEps;
 	
+	vector<int> surfIndexMapping;
 	vector<double> uShift;
 	
 	void zero_params() {
@@ -245,7 +246,8 @@ struct constant_energy_struct {
 	double uImpDihedral = 0.0;
 	double uLJ = 0.0;
 	double uQQ = 0.0;
-	double u14 = 0.0;
+	double uLJ14 = 0.0;
+	double uQQ14 = 0.0;
 	double u15 = 0.0;
 	double u16plus = 0.0;
 	double uTotal = 0.0;
@@ -263,6 +265,8 @@ struct constant_struct {
 	bool genXyzFileNames;
 	string inputFileString;
 	string parameterFile;	
+	
+	int writeEnergyDist;
 	
 	int nrexcl;
 	int gromacsCombRule;
@@ -329,6 +333,7 @@ struct vector_struct {
 	vector<string> xyzFileList;
 	vector<string> energyFileList;
 	vector<string> connectFileList;
+	vector<string> sortedConFiles;
 	
 	vector<int> partitionMap;
 	vector<int> integrationRule;
@@ -351,10 +356,7 @@ struct vector_struct {
 	vector<vector<double> > improperData;
 	vector<vector<double> > pairData;
 	
-	vector<int> dihedralIndexMapping;
 	vector<vector<double> > cosPsiData;
-	
-	vector<int> pairIndexMapping;
 	vector<vector<double> > pairSepData;
 	
 	vector<vector<double> > energyDelta;
@@ -390,5 +392,5 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, fitting_param_s
 int param_linear_combine(fitting_param_struct &outParams, fitting_param_struct aParams, fitting_param_struct bParams, double a, double b);
 double param_scalar_product(fitting_param_struct aParams, fitting_param_struct bParams);
 
-int print_params_console(fitting_param_struct &printParams);
-int print_simplex_console(simplex_struct &printSim);
+int print_params_console(constant_struct &cons, fitting_param_struct &printParams);
+int print_simplex_console(constant_struct &cons, simplex_struct &printSim);

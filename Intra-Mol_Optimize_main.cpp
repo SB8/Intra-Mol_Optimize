@@ -7,6 +7,9 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 	ifstream inputNames;
 	cout << "Opening input file " << cons.inputFileString << endl;
 	inputNames.open(cons.inputFileString.c_str());
+	if (!inputNames.is_open()) {
+		exit(EXIT_FAILURE);
+	}
 	
 	// Get parameter file name
 	inputNames >> cons.parameterFile;
@@ -33,7 +36,8 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 		{"weight_edges_periodically", TYPE_INT, &(cons.weightPhiEdges), "1"},
 		{"sigma_1_4_factor", TYPE_FLOAT, &(cons.sigma14factor), "1.0"},
 		{"sigma_1_4_mod_cutoff", TYPE_FLOAT, &(cons.sigma14factorCutoff), "0.3"},
-		{"use_adaptive_nelder_mead", TYPE_INT, &(cons.useAdaptiveNelderMead), "1"}
+		{"use_adaptive_nelder_mead", TYPE_INT, &(cons.useAdaptiveNelderMead), "1"},
+		{"write_energy_distribution", TYPE_INT, &(cons.writeEnergyDist), "0"}
 	};
 	
 	int inputDefaultSize = sizeof(inputDefaults)/sizeof(inputDefaults[0]);
@@ -201,8 +205,9 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 		vecs.energyFileList.resize(1);
 	}
 	
-	vecs.dihedralIndexMapping.resize(512,-1); // Size = max number of dihedrals supported
-	vecs.pairIndexMapping.resize(512,-1);
+	initialParams.surfIndexMapping.resize(cons.numPhiSurfaces,-1);
+	initialParams.dihedralIndexMapping.resize(512,-1); // Size = max number of dihedrals supported
+	initialParams.pairIndexMapping.resize(512,-1);
 	
 	// Resize outer (i_s) loop of vector<vector> types
 	vecs.xyzData.resize(cons.numPhiSurfaces);	
@@ -258,7 +263,7 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 	cons.downhillWrite = 10;
 	
 	// Simulated annealing parameters
-	cons.vTempInitial = (5000 + 50*cons.KT)/1000.0; // Starting guess
+	cons.vTempInitial = (5000.0 + 50.0*cons.KT)/500.0; // Starting guess
 	cons.vTempFactor = 0.9999;
 	cons.dihedralStep = 2.0;
 	cons.sigmaStep = 0.0002;
@@ -297,7 +302,7 @@ int main(int argc, char *argv[])
 	cons.numTotalParams = currentParams.uShift.size() + currentParams.rbCoeff.size() + currentParams.ljSigma.size()*2;
 	
 	cout << "Starting parameters\n";
-	print_params_console(currentParams);
+	print_params_console(cons, currentParams);
 	
 	srand(time(NULL));
 	
@@ -388,7 +393,7 @@ int simulated_annealing(constant_struct cons, vector_struct vecs, fitting_param_
 			
 		// Generate trial point
 		//cout << "Trial dihedral params:\n";
-		for (int i_s=0; i_s < cons.numPhiSurfaces; i_s++) {
+		for (int i_s=0; i_s < oldParams.uShift.size(); i_s++) {
 			//
 			double normalStep = distribution(generator);
 			annealParams.uShift[i_s] = oldParams.uShift[i_s]
@@ -429,7 +434,7 @@ int simulated_annealing(constant_struct cons, vector_struct vecs, fitting_param_
 		if (aProb > (rand()/double(RAND_MAX))) {
 			if (toPrint) {
 				cout << "Accepting these params.\n";
-				print_params_console(annealParams);
+				print_params_console(cons, annealParams);
 			}
 			oldParams = annealParams;
 		}
@@ -449,7 +454,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, fitting_param_str
 {
 	cout << "\nPerforming " << simplexIt << " downhill simplex iteraitons\n\n";
 	double nmEPS = 1.0E-14L;
-	int printFreq = 1; // Print simplex to console every printFreq steps
+	int printFreq = 100; // Print simplex to console every printFreq steps
 	int numReflectSteps = 0;
 	
 	int simpSize = cons.numTotalParams + 1;
@@ -483,7 +488,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, fitting_param_str
 	
 	// Print starting simplex
 	cout << "--- INITIAL SIMPLEX ---\n";
-	print_simplex_console(sim);
+	print_simplex_console(cons, sim);
 	
 	// Analyse simplex and fill simplexErrors
 	for (int row=0; row<simpSize; row++) {
@@ -513,7 +518,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, fitting_param_str
 			if (simplexIt > 0) {
 				// Update currentParams array
 				cout << "\n Best params from simplex:\n";			
-				print_params_console(sim.plex[bestRow]);	
+				print_params_console(cons, sim.plex[bestRow]);	
 				currentParams = sim.plex[bestRow];					
 			}
 			return 0;		
@@ -618,7 +623,7 @@ int downhill_simplex(constant_struct cons, vector_struct vecs, fitting_param_str
 		}
 		// Output new simplex
 		if (toPrint) {
-			print_simplex_console(sim);
+			print_simplex_console(cons, sim);
 		}
 	} // Iteration loop
 	
@@ -656,7 +661,7 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, fitting_param_s
 	double alpha = 0.001, tau = 0.5; // Starting step size and reduction factor
 	double currentBestAlpha = alpha;
 		
-	const int nMax = 50; // Maximum number of iterations in line search
+	const int nMax = 32; // Maximum number of iterations in line search
 	double lineSearchF[nMax];
 	double currentBestF = previousF;
 		
@@ -689,7 +694,7 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, fitting_param_s
 		
 		if (toPrint) {
 			cout << "\nGradient:\n";
-			print_params_console(gradVectorNew);
+			print_params_console(cons, gradVectorNew);
 		}
 		
 		// Calculate dot-products needed for beta and theta coefficients
@@ -716,10 +721,9 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, fitting_param_s
 		// Perform line search in conjugate direction
 		int n=0;
 		alpha = 0.001;
-		double deltaZ = 0.001;
+		double deltaZ = 0.0001;
 		double deltaCG = -1.0; // Set negative for start of while loop
-		while ( (n<=nMax) && (deltaCG <= 0.0) )
-		{
+		while ( (n<=nMax) && (deltaCG < 0.0) ) {
 			// Get updated params from x_i+1 = x_i - alpha*d_i+1
 			param_linear_combine(tempParams, currentParams, cgVectorNew, 1.0, alpha);
 
@@ -739,9 +743,8 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, fitting_param_s
 		
 		if (toPrint) {
 			cout << "Updating parameters, F = " << currentF << endl;
-			print_params_console(currentParams);
+			print_params_console(cons, currentParams);
 		}
-	
 	}		
 	
 	return 0;
@@ -1338,7 +1341,33 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 	double aVec1[3], aVec2[3];
 	double dVec1[3], dVec2[3], dVec3[3];
 	double crossVec1[3], crossVec2[3], crossVec3[3];
-	initialParams.uShift.push_back(0.0);
+	
+	// Reinitialize type counters
+	int totalUniqueDihedrals = initialParams.rbTypeCount.size();
+	int totalUniquePairs = initialParams.ljSigma.size();
+	int totalUniqueMols = initialParams.uShift.size();
+		
+	// Map molecule connectivity file to molecule ID
+
+	// Search file list for this molecule
+	bool molNew = 1;
+	int molID;
+	for (int mol=0; mol<vecs.sortedConFiles.size(); mol++) {
+		if (vecs.connectFileList[i_s] == vecs.sortedConFiles[mol]) {
+			molNew = 0;
+			molID = mol;
+		}
+	}
+	if (molNew) {
+		cout << "Connect file " << vecs.connectFileList[i_s] << " is new molecule type. ID=" << totalUniqueMols << endl;
+		vecs.sortedConFiles.push_back(vecs.connectFileList[i_s]);
+		initialParams.surfIndexMapping[i_s] = totalUniqueMols++;
+		initialParams.uShift.push_back(0.0);
+	}
+	else {
+		initialParams.surfIndexMapping[i_s] = molID;
+		cout << "Connect file " << vecs.connectFileList[i_s] << " is existing molecule type. ID=" << molID << endl;
+	}
 		
 	// Read coordinates of all configs in i_s
 	vector<double> coords(3*vecs.molSize[i_s].atoms*cons.numConfigs);
@@ -1381,6 +1410,7 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 			
 			vecs.uConst[i_s][i_f].uAngle += 0.5*kTheta*(theta-theta0)*(theta-theta0);
 			//cout << "theta, theta0: " << theta*180.0/cons.pi << ", " << theta0*180.0/cons.pi << endl;	
+			//cout << "i_f, k_theta, U_a: " << i_f << ", " << kTheta << ", " << vecs.uConst[i_s][i_f].uAngle << endl;
 		}
 	}
 		
@@ -1392,11 +1422,11 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 		// If this dihedral's parameters are being varied during fit
 		if (dType != 0) {			
 			// If new type (mapping array should be initialized to -1)
-			if (vecs.dihedralIndexMapping[dType] < 0) {	
+			if (initialParams.dihedralIndexMapping[dType] < 0) {	
 				// Index dType maps to this dihedral number in fitting
-				vecs.dihedralIndexMapping[dType] = initialParams.totalUniqueDihedrals++;	
+				initialParams.dihedralIndexMapping[dType] = totalUniqueDihedrals++;	
 				initialParams.rbTypeCount.push_back(1);	// First of this type			
-				cout << "Type " << dType << " is new dihedral type " << initialParams.totalUniqueDihedrals << endl;		
+				cout << "Type " << dType << " is new dihedral type " << totalUniqueDihedrals << endl;		
 				// Add coeffs for new type
 				for (int cosExp=1; cosExp < cons.nRBfit; cosExp++) {
 					double newCoeff = vecs.dihedralData[i_s][d*cons.dihedralDataSize + 5 + cosExp];
@@ -1405,11 +1435,11 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 			}
 			else {
 				// If not a new type, simply add one to count and average coeffs
-				size_t count = ++initialParams.rbTypeCount[vecs.dihedralIndexMapping[dType]];	
+				size_t count = ++initialParams.rbTypeCount[initialParams.dihedralIndexMapping[dType]];	
 				
 				for (int cosExp=1; cosExp < cons.nRBfit; cosExp++) {
 					
-					int offSet = vecs.dihedralIndexMapping[dType]*(cons.nRBfit-1);
+					int offSet = initialParams.dihedralIndexMapping[dType]*(cons.nRBfit-1);
 					double newCoeff = vecs.dihedralData[i_s][d*cons.dihedralDataSize + 5 + cosExp];
 					
 					// Take average of this and all the others of this type
@@ -1588,21 +1618,20 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 						
 						fitPair = 1;								
 						// If new type (mapping array should be initialized to -1)
-						if (vecs.pairIndexMapping[pairType] < 0) {	
+						if (initialParams.pairIndexMapping[pairType] < 0) {	
 							// Index pairType maps to this pair number in fitting
-							vecs.pairIndexMapping[pairType] = initialParams.totalUniquePairs++;	
-							initialParams.ljTypeCount.push_back(1);	// First of this type			
-				
+							initialParams.pairIndexMapping[pairType] = totalUniquePairs++;	
+							initialParams.ljTypeCount.push_back(1.0);	// First of this type			
+							
 							// Add sigma and eps
 							initialParams.ljSigma.push_back(newSigma);
 							initialParams.ljEps.push_back(newEpsilon);
-							cout << "Type " << pairType << " is new pair type " << initialParams.totalUniquePairs << endl;		
+							cout << "Type " << pairType << " is new pair type " << totalUniquePairs << endl;		
 						}
 						else {
 							// If not a new type, simply add one to count and average sigma/eps
-							int mapping = vecs.pairIndexMapping[pairType];
-							size_t count = ++initialParams.ljTypeCount[vecs.pairIndexMapping[pairType]];	
-							
+							int mapping = initialParams.pairIndexMapping[pairType];
+							size_t count = ++initialParams.ljTypeCount[initialParams.pairIndexMapping[pairType]];	
 							// Take average of this and all the others of this type
 							initialParams.ljSigma[mapping] = 
 								(newSigma/count) + (count-1)*initialParams.ljSigma[mapping]/count;
@@ -1645,18 +1674,20 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 				// 138.9355 converts q[e]q[e]/r[nm] to coulomb energy in kJ/mol
 				double energyPairQQ = 138.93546*vecs.qqMatrix[i_s][m1]/r_ij;
 				vecs.uConst[i_s][i_f].uQQ += energyPairQQ;
+				//cout << i << ", " << j << ":\nr,qq    " << r_ij << ", " << vecs.qqMatrix[i_s][m1] << endl;
 			
 				if (fitPair == 1) {
-					vecs.pairSepData[i_s].push_back(r_ij);	
-					//cout << "SIZE " << vecs.pairSepData[i_s].size() << endl;				
+					vecs.pairSepData[i_s].push_back(r_ij);					
 				}
 				else {
 					double LJ6 = pow(ljSigma/r_ij,6);
 					double energyPairLJ = 4.0*ljEps*(LJ6*LJ6-LJ6);
+					//cout << "r,sigma " << r_ij << ", " << ljSigma << endl;
 					
 					// Split into 1-4, 1-5 and 1-6+ parts for plotting
 					if (vecs.bondSepMat[i_s][m1] == 3) {
-						vecs.uConst[i_s][i_f].u14 += (energyPairQQ + energyPairLJ);
+						vecs.uConst[i_s][i_f].uLJ14 += energyPairLJ;
+						vecs.uConst[i_s][i_f].uQQ14 += energyPairQQ;
 					} 
 					else if (vecs.bondSepMat[i_s][m1] == 4) {
 						vecs.uConst[i_s][i_f].u15 += (energyPairQQ + energyPairLJ);
@@ -1679,11 +1710,24 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 		cout << endl;
 	}
 	
+	ofstream outDist;
+	if (cons.writeEnergyDist) {
+		outDist.open("const_energy_dist.txt");
+	}
+	
 	// Sum total constant energies
 	for (int i_f=0; i_f < cons.numConfigs; i_f++) {
 		vecs.uConst[i_s][i_f].sumEnergies();
 		//cout << "Total constant energy (" << i_s << ", " << i_f << ") = " << vecs.uConst[i_s][i_f].uTotal << endl;
+		if (cons.writeEnergyDist) {
+			outDist << vecs.uConst[i_s][i_f].uAngle << " " << vecs.uConst[i_s][i_f].uImpDihedral << " ";
+			outDist << vecs.uConst[i_s][i_f].uLJ14 << " " << vecs.uConst[i_s][i_f].uQQ14 << " ";
+			outDist << vecs.uConst[i_s][i_f].uLJ - vecs.uConst[i_s][i_f].uLJ14 << " ";
+			outDist << vecs.uConst[i_s][i_f].uQQ - vecs.uConst[i_s][i_f].uQQ14 << " " << endl;
+		}
 	}
+	
+	
 
 	return 0;
 }
@@ -1705,7 +1749,7 @@ double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting
 		energyMD.open("energyMD.txt");
 		energyDist.open("energyDist.txt");
 	}
-	//print_params_console(trialParams);
+	//print_params_console(cons, trialParams);
 	
 	// Total sum of all contributions to objective function (F) per surface
 	vector<double> sumF(cons.numPhiSurfaces,0.0);
@@ -1724,7 +1768,7 @@ double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting
 			// Get diherdal type
 			int dType = int(round(vecs.dihedralData[i_s][d*cons.dihedralDataSize + 4]));
 			// Map dihedral type to dihedral ID
-			int rbID = vecs.dihedralIndexMapping[dType];			
+			int rbID = trialParams.dihedralIndexMapping[dType];			
 			//cout << "dType, dID " << dType << " " << rbID << endl;
 			if (dType > 0) {
 				//
@@ -1760,7 +1804,7 @@ double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting
 				
 			if (pairType > 0) {
 				// Map pair type to pair ID
-				int pairID = vecs.pairIndexMapping[pairType];
+				int pairID = trialParams.pairIndexMapping[pairType];
 				
 				for (int i_f=0; i_f<cons.numConfigs; i_f++) {	
 					double r_ij = vecs.pairSepData[i_s][i_pairSep++];
@@ -1776,13 +1820,16 @@ double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting
 				// LJ restraint term added directly to F
 				double epsDelta = trialParams.ljEps[pairID] - initialParams.ljEps[pairID];
 				sumF[i_s] += cons.epsK*epsDelta*epsDelta*double(cons.numConfigs)/double(trialParams.ljTypeCount[pairID]);
+				//if (toWrite) cout << "epsDelta, epsK " << epsDelta << ", " << cons.epsK << endl;
 			}	
 		}	
+		
+		int molID = trialParams.surfIndexMapping[i_s];
 		
 		// Now total energy is known, sum F over configs
 		for (int i_f=0; i_f<cons.numConfigs; i_f++) {	
 			//
-			energyTotal[i_s][i_f] = vecs.uConst[i_s][i_f].uTotal + trialParams.uShift[i_s] 
+			energyTotal[i_s][i_f] = vecs.uConst[i_s][i_f].uTotal + trialParams.uShift[molID] 
 				+ energyPair[i_s][i_f] + energyDihedral[i_s][i_f];
 						
 			// F += weighting*(delta*U)^2 
@@ -1791,6 +1838,7 @@ double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting
 		
 			// Write to file
 			if (toWrite == 1) {
+				//cout << "Total: " << energyTotal[i_s][i_f] << "\nDFT:   " << vecs.dftData[i_s][i_f] << endl;
 				energyMD << energyTotal[i_s][i_f] << endl;
 			}
 		}
@@ -1859,7 +1907,7 @@ fitting_param_struct currentParams, fitting_param_struct &grad)
 			// Get diherdal type
 			int dType = int(round(vecs.dihedralData[i_s][d*cons.dihedralDataSize + 4]));
 			// Map dihedral type to dihedral ID
-			int rbID = vecs.dihedralIndexMapping[dType];			
+			int rbID = currentParams.dihedralIndexMapping[dType];			
 			//cout << "dType, dID " << dType << " " << rbID << endl;
 			if (dType > 0) {
 				//
@@ -1895,7 +1943,7 @@ fitting_param_struct currentParams, fitting_param_struct &grad)
 				
 			if (pairType > 0) {
 				// Map pair type to pair ID
-				int ljID = vecs.pairIndexMapping[pairType];
+				int ljID = currentParams.pairIndexMapping[pairType];
 				
 				for (int i_f=0; i_f<cons.numConfigs; i_f++) {	
 					double r_ij = vecs.pairSepData[i_s][i_pairSep++];
@@ -1914,8 +1962,9 @@ fitting_param_struct currentParams, fitting_param_struct &grad)
 			}	
 		}	
 		
-		for (int i_f=0; i_f<cons.numConfigs; i_f++) {	
-			grad.uShift[i_s] += 2*vecs.energyWeighting[i_s][i_f]*vecs.energyDelta[i_s][i_f];
+		int molID = currentParams.surfIndexMapping[i_s];
+		for (int i_f=0; i_f<cons.numConfigs; i_f++) {				
+			grad.uShift[molID] += 2*vecs.energyWeighting[i_s][i_f]*vecs.energyDelta[i_s][i_f];
 		}
 	} // i_s loop
 	
@@ -1925,9 +1974,9 @@ fitting_param_struct currentParams, fitting_param_struct &grad)
 	}
 	
 	//cout << "Current:\n";
-	//print_params_console(currentParams);
+	//print_params_console(cons, currentParams);
 	//cout << "Grad:\n";
-	//print_params_console(grad);
+	//print_params_console(cons, grad);
 
 	return 0;
 } 
@@ -2051,30 +2100,30 @@ int compute_boltzmann_integrals(constant_struct cons, vector_struct vecs, vector
 	return 0;
 }
 
-int print_params_console(fitting_param_struct &printParams) 
+int print_params_console(constant_struct &cons, fitting_param_struct &printParams) 
 {
+	const int rbPerRow = 3;
+	
 	for (int i=0; i < printParams.uShift.size(); i++) {
-		printf("%7.5g ", printParams.uShift[i]);
-		//cout << std::setprecision(6) << std::setw(10) << printParams.uShift[i_s];
+		printf("%7.3f ", printParams.uShift[i]);
 	}
+	cout << endl;
 	for (int j=0; j < printParams.rbCoeff.size(); j++) {
-		printf("%7.5g ", printParams.rbCoeff[j]);
-		//cout << std::setprecision(6) << std::setw(10) << printParams.rbCoeff[p];	
+		printf("%7.3f ", printParams.rbCoeff[j]);
+		if ((j+1)%((cons.nRBfit-1)*rbPerRow)==0) cout << endl; 
 	}
 	for (int k=0; k < printParams.ljEps.size(); k++) {
-		printf("%7.5g ", printParams.ljSigma[k]);
-		printf("%7.5g ", printParams.ljEps[k]);
-		//cout << std::setprecision(6) << std::setw(10) << printParams.ljSigma[pair];	
-		//cout << std::setprecision(6) << std::setw(10) << printParams.ljEps[pair];
+		printf("%7.4f ", printParams.ljSigma[k]);
+		printf("%7.4f ", printParams.ljEps[k]);
 	}
 	cout << endl;
 	return 0;
 }
 
-int print_simplex_console(simplex_struct &printSim)
+int print_simplex_console(constant_struct &cons, simplex_struct &printSim)
 {
 	for (int row=0; row<printSim.plex.size(); row++) {
-		print_params_console(printSim.plex[row]);	
+		print_params_console(cons, printSim.plex[row]);	
 	}	
 	return 0;
 }
