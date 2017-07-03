@@ -1,0 +1,9 @@
+input_parameters_2s.txt
+                        
+connectivity_files/connectivity_DEMe_no-pair-fit.txt
+xyz_files/DEMe_CG_ABTT_113d_XYZ/DEMe_ABTT_XYZ_EM_
+energy_profiles/DEMe/DEMe_ABTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_DEMe_no-pair-fit.txt
+xyz_files/DEMe_CG_TABT_113d_XYZ/DEMe_TABT_XYZ_EM_
+energy_profiles/DEMe/DEMe_TABT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt

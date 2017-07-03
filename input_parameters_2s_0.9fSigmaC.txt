@@ -2,8 +2,9 @@ gen_xyz_file_names 1
 phi_dim 2
 phi1_range 0 180 10
 phi2_range 0 360 10
-num_phi_surfaces 1
+num_phi_surfaces 2
 eps_restraint_k 1.0
+sigma_1_4_factor 0.9
 scale_1_4_qq 0.5
-scale_1_4_lj 0.0 
+scale_1_4_lj 0.5
 write_energy_distribution 1

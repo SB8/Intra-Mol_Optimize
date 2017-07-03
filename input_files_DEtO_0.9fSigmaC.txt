@@ -1,0 +1,4 @@
+input_parameters_0.9fSigmaC.txt
+connectivity_files/connectivity_DEtO_no-pair-fit.txt
+xyz_files/DEtO_CG_fLJ0.5_SIGMA-0.346500_XYZ/DEtO_XYZ_EM_
+energy_profiles/DEtO/DEtO_2D-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt

@@ -1,4 +1,0 @@
-input_parameters.txt
-connectivity_files/connectivity_DME.txt
-xyz_files/DME_CG_1,5-0.318-0.563_XYZ/DME_XYZ_EM_
-energy_profiles/DME/DME_tAB_B3LYP-D3_6-311++G-2d,2p_energy_kJ-mol-1.txt

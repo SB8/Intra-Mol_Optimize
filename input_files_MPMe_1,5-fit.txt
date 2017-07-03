@@ -1,0 +1,13 @@
+input_parameters_3s.txt
+                        
+connectivity_files/connectivity_MPMe_1,5-fit.txt
+xyz_files/MPMe_CG_ABTT_0.333-0.616_0.288-0.449_0.350-0.548_XYZ/MPMe_ABTT_XYZ_EM_
+energy_profiles/MPMe/MPMe_ABTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_MPMe_1,5-fit.txt
+xyz_files/MPMe_CG_TABT_0.333-0.616_0.288-0.449_0.350-0.548_XYZ/MPMe_TABT_XYZ_EM_
+energy_profiles/MPMe/MPMe_TABT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_MPMe_1,5-fit.txt
+xyz_files/MPMe_CG_TTAB_0.333-0.616_0.288-0.449_0.350-0.548_XYZ/MPMe_TTAB_XYZ_EM_
+energy_profiles/MPMe/MPMe_TTAB-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt

@@ -1,0 +1,9 @@
+input_parameters_2s_0.9fSigmaC.txt
+
+connectivity_files/connectivity_EPr_no-pair-fit.txt
+xyz_files/EPr_CG_ABT_fLJ0.5_SIGMA-0.346500-0.355500-0.308750_XYZ/EPr_ABT_XYZ_EM_
+energy_profiles/EPr/EPr_ABT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_EPr_no-pair-fit.txt
+xyz_files/EPr_CG_TAB_fLJ0.5_SIGMA-0.346500-0.355500-0.308750_XYZ/EPr_TAB_XYZ_EM_
+energy_profiles/EPr/EPr_TAB-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt

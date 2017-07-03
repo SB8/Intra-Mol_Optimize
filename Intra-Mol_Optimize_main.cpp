@@ -1001,7 +1001,7 @@ int connectivity_process(constant_struct cons, vector_struct &vecs, int i_s)
 			//int m2 = j*vecs.molSize[i_s].atoms+i;
 			bool toFit = 0;
 			
-			// Loop over pairs to work out if this is the LJ pair to be fitted
+			// Loop over pairs to work out if this is an LJ pair to be fitted
 			for (int p=0; p < vecs.molSize[i_s].pairs; p++) {
 				if ( (vecs.pairData[i_s][p*cons.pairDataSize] == a1) && (vecs.pairData[i_s][p*cons.pairDataSize + 1] == a2) )
 					toFit = 1;		
@@ -1020,7 +1020,7 @@ int connectivity_process(constant_struct cons, vector_struct &vecs, int i_s)
 					sigma_j*cons.sigma14factor : sigma_j;
 			}	
 			
-			double sigma = 0.5*(sigma_i+ sigma_j);
+			double sigma = 0.5*(sigma_i + sigma_j);
 			double epsilon = sqrt(vecs.atomData[i_s][i*cons.atomDataSize+3]*vecs.atomData[i_s][j*cons.atomDataSize+3]);
 			double QQ = vecs.atomData[i_s][i*cons.atomDataSize+1]*vecs.atomData[i_s][j*cons.atomDataSize+1];
 			
@@ -1381,6 +1381,7 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 		}
 	}
 	// Bond energy currently ignored because TraPPE uses fixed bonds
+	
 	
 	// Calculate angle (bending) energy
 	for (int c=0; c < vecs.molSize[i_s].angles; c++) {
@@ -1777,7 +1778,7 @@ double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting
 					for (int cosExp=1; cosExp<cons.nRBfit; cosExp++) {
 						double coeff = trialParams.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)];
 						double cosPsiPow = vecs.cosPsiData[i_s][i_psiPow++];
-						//cout << "d, i_f, coeff, cosPsiPow " << d << ", " << i_f <<;
+						//cout << "d, i_f, coeff, cosPsiPow " << d << ", " << i_f;
 						//cout << ", " << coeff << ", " << cosPsiPow << endl; 	
 						energyDihedral[i_s][i_f] += cosPsiPow*coeff;
 					}
@@ -1810,9 +1811,11 @@ double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting
 					double r_ij = vecs.pairSepData[i_s][i_pairSep++];
 					double sigma = trialParams.ljSigma[pairID];
 					double epsilon = trialParams.ljEps[pairID];
-					double LJ6 = pow(sigma/r_ij, 6);
 					
-					energyPair[i_s][i_f] += 4.0*epsilon*(LJ6*LJ6-LJ6);
+					double sigR, sigR6;
+					sigR = sigma/r_ij; sigR6 = sigR*sigR*sigR*sigR*sigR*sigR; // pow() was much slower
+					
+					energyPair[i_s][i_f] += 4.0*epsilon*(sigR6*sigR6 - sigR6);
 					//cout << "pair, sigma, epsilon, r_ij, energyPair: ";
 					//cout << pair << ", " << sigma << ", " << epsilon <<;
 					//cout << ", " << r_ij << ", " << energyPair[i_s][i_f] << endl;
@@ -1836,9 +1839,12 @@ double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting
 			vecs.energyDelta[i_s][i_f] = energyTotal[i_s][i_f]-vecs.dftData[i_s][i_f];
 			sumF[i_s] += vecs.energyDelta[i_s][i_f]*vecs.energyDelta[i_s][i_f]*vecs.energyWeighting[i_s][i_f];
 		
+			//cout << "Delta  " << energyTotal[i_s][i_f] - vecs.dftData[i_s][i_f] << endl;
+		
 			// Write to file
 			if (toWrite == 1) {
-				//cout << "Total: " << energyTotal[i_s][i_f] << "\nDFT:   " << vecs.dftData[i_s][i_f] << endl;
+				energyDist << vecs.uConst[i_s][i_f].uTotal << ", " << trialParams.uShift[molID] << ", " ;
+				energyDist << energyPair[i_s][i_f] << ", " << energyDihedral[i_s][i_f] << endl;
 				energyMD << energyTotal[i_s][i_f] << endl;
 			}
 		}
@@ -1885,6 +1891,8 @@ double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting
 		cout << "RMS = " << sumRMS << endl;
 		}
 	} */
+	
+	totalSumF /= cons.numPhiSurfaces;
 	
 	return totalSumF;
 }
@@ -1949,12 +1957,14 @@ fitting_param_struct currentParams, fitting_param_struct &grad)
 					double r_ij = vecs.pairSepData[i_s][i_pairSep++];
 					double sigma = currentParams.ljSigma[ljID];
 					double epsilon = currentParams.ljEps[ljID];
-					double LJ6 = pow(sigma/r_ij, 6);
+					
+					double sigR, sigR6;
+					sigR = sigma/r_ij; sigR6 = sigR*sigR*sigR*sigR*sigR*sigR; 
 					
 					// Weighted delta
 					double wd = vecs.energyWeighting[i_s][i_f]*vecs.energyDelta[i_s][i_f];					
-					grad.ljSigma[ljID] += 2*wd*4.0*epsilon*(LJ6*LJ6*12 - LJ6*6)/sigma;
-					grad.ljEps[ljID] += 2*wd*4.0*(LJ6*LJ6-LJ6);
+					grad.ljSigma[ljID] += 2*wd*4.0*epsilon*(sigR6*sigR6*12 - sigR6*6)/sigma;
+					grad.ljEps[ljID] += 2*wd*4.0*(sigR6*sigR6-sigR6);
 				} 
 				// LJ restraint term added directly to F
 				double epsDelta = currentParams.ljEps[ljID]-initialParams.ljEps[ljID];
@@ -1972,6 +1982,8 @@ fitting_param_struct currentParams, fitting_param_struct &grad)
 	for (int k=0; k < grad.ljSigma.size(); k++) {
 		grad.ljSigma[k] *= cons.sigmaGradFactor;
 	}
+	
+	param_linear_combine(grad, grad, grad, 1.0/double(cons.numPhiSurfaces), 0.0);
 	
 	//cout << "Current:\n";
 	//print_params_console(cons, currentParams);
@@ -2107,11 +2119,12 @@ int print_params_console(constant_struct &cons, fitting_param_struct &printParam
 	for (int i=0; i < printParams.uShift.size(); i++) {
 		printf("%7.3f ", printParams.uShift[i]);
 	}
-	cout << endl;
 	for (int j=0; j < printParams.rbCoeff.size(); j++) {
+		if (j%((cons.nRBfit-1)*rbPerRow)==0) cout << endl; 
 		printf("%7.3f ", printParams.rbCoeff[j]);
-		if ((j+1)%((cons.nRBfit-1)*rbPerRow)==0) cout << endl; 
+		
 	}
+	cout << endl;
 	for (int k=0; k < printParams.ljEps.size(); k++) {
 		printf("%7.4f ", printParams.ljSigma[k]);
 		printf("%7.4f ", printParams.ljEps[k]);

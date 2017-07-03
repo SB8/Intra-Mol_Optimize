@@ -1,4 +1,0 @@
-input_parameters.txt
-connectivity_files/connectivity_DEE_no-pair-fit.txt
-xyz_files/DEE_CG_0.5fLJ_XYZ/DEE_XYZ_EM_
-energy_profiles/DEE/DEE_2D-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
