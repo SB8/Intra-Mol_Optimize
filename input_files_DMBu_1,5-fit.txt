@@ -1,9 +1,0 @@
-input_parameters.txt
-
-connectivity_files/connectivity_1,4-DMBu.txt
-xyz_files/1,4-DMBu_CG_ABTTT_0.3518-0.5456_0.3476-0.3412_XYZ/1,4-DMBu_ABTTT_XYZ_EM_
-energy_profiles/1,4-DMBu/1,4-DMBu_ABTTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
-                         
-connectivity_files/connectivity_1,4-DMBu.txt
-xyz_files/1,4-DMBu_CG_TABTT_0.3518-0.5456_0.3476-0.3412_XYZ/1,4-DMBu_TABTT_XYZ_EM_
-energy_profiles/1,4-DMBu/1,4-DMBu_TABTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
