@@ -1,9 +1,9 @@
-input_parameters_2s_0.9fSigmaC.txt
+parameter_files/input_parameters_2s_0.9fSigmaC.txt
 
 connectivity_files/connectivity_DMBu.txt
-xyz_files/DMBu_CG_ABTTT_fLJ0.5_SIGMA-0.346500-0.317750-0.355500_XYZ/DMBu_ABTTT_XYZ_EM_
+xyz_files/DMBu_CG_K2E5_ABTTT_fLJ0.5_SIGMA-0.346500-0.317750-0.355500_XYZ/DMBu_ABTTT_XYZ_EM_
 energy_profiles/DMBu/DMBu_ABTTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
 
 connectivity_files/connectivity_DMBu.txt
-xyz_files/DMBu_CG_TABTT_fLJ0.5_SIGMA-0.346500-0.317750-0.355500_XYZ/DMBu_TABTT_XYZ_EM_
+xyz_files/DMBu_CG_K2E5_TABTT_fLJ0.5_SIGMA-0.346500-0.317750-0.355500_XYZ/DMBu_TABTT_XYZ_EM_
 energy_profiles/DMBu/DMBu_TABTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt

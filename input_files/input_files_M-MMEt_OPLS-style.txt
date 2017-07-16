@@ -1,0 +1,17 @@
+parameter_files/input_parameters_4s_OPLS-style.txt
+
+connectivity_files/connectivity_M-MMEt.txt
+xyz_files/M-MMET_CG_K2E5_ABTTT_fLJ0.5_OPLS-style_XYZ/M-MMEt_ABTTT_XYZ_EM_
+energy_profiles/M-MMEt/M-MMEt_ABTTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_M-MMEt.txt
+xyz_files/M-MMET_CG_K2E5_TABTT_fLJ0.5_OPLS-style_XYZ/M-MMEt_TABTT_XYZ_EM_
+energy_profiles/M-MMEt/M-MMEt_TABTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_M-MMEt.txt
+xyz_files/M-MMET_CG_K2E5_TTABT_fLJ0.5_OPLS-style_XYZ/M-MMEt_TTABT_XYZ_EM_
+energy_profiles/M-MMEt/M-MMEt_TTABT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_M-MMEt.txt
+xyz_files/M-MMET_CG_K2E5_TTTAB_fLJ0.5_OPLS-style_XYZ/M-MMEt_TTTAB_XYZ_EM_
+energy_profiles/M-MMEt/M-MMEt_TTTAB-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt

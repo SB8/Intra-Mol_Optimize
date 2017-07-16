@@ -1,4 +1,5 @@
-input_parameters.txt
+parameter_files/input_parameters.txt
+
 connectivity_files/connectivity_DMEt_1,5-fit.txt
-xyz_files/DMEt_CG_1,5-0.318-0.563_XYZ/DMEt_XYZ_EM_
-energy_profiles/DMEt/DMEt_tAB_B3LYP-D3_6-311++G-2d,2p_energy_kJ-mol-1.txt
+xyz_files/DMEt_CG_ABT_0.3181-0.5639_XYZ/DMEt_XYZ_EM_
+energy_profiles/DMEt/DMEt_ABT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
