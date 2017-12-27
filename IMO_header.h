@@ -42,6 +42,7 @@ typedef struct {
 struct fitting_param_struct {
 	
 	vector<int> dihedralIndexMapping;
+	vector<int> dihedralMappingIndex;
 	vector<int> rbTypeCount; 
 	vector<double> rbCoeff;
 	
@@ -54,7 +55,6 @@ struct fitting_param_struct {
 	vector<double> uShift;
 	
 	void zero_params() {
-				
 		std::fill(uShift.begin(), uShift.end(), 0.0);
 		std::fill(rbCoeff.begin(), rbCoeff.end(), 0.0);
 		std::fill(ljEps.begin(), ljEps.end(), 0.0);
@@ -264,7 +264,9 @@ struct constant_struct {
 	bool xyzAngstroms;
 	bool genXyzFileNames;
 	string inputFileString;
-	string parameterFile;	
+	string parameterFile;
+	string phiPairFiles;
+	string numPhiPairString;
 	
 	int writeEnergyDist;
 	
@@ -333,6 +335,8 @@ struct vector_struct {
 	vector<string> xyzFileList;
 	vector<string> energyFileList;
 	vector<string> connectFileList;
+	vector<string> phiPairFileList;
+	vector<int> numPhiPairs;
 	vector<string> sortedConFiles;
 	
 	vector<int> partitionMap;
@@ -393,4 +397,5 @@ int param_linear_combine(fitting_param_struct &outParams, fitting_param_struct a
 double param_scalar_product(fitting_param_struct aParams, fitting_param_struct bParams);
 
 int print_params_console(constant_struct &cons, fitting_param_struct &printParams);
+int print_grad_console(constant_struct &cons, fitting_param_struct &printParams);
 int print_simplex_console(constant_struct &cons, simplex_struct &printSim);

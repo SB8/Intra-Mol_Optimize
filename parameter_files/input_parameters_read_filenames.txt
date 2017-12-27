@@ -1,0 +1,8 @@
+gen_xyz_file_names 0
+phi_dim 2
+num_phi_surfaces 1
+eps_restraint_k 1.0
+scale_1_4_qq 0.5
+scale_1_4_lj 0.0 
+write_energy_distribution 1
+phi_pairs_file 

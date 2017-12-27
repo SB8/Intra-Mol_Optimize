@@ -1,0 +1,13 @@
+parameter_files/input_parameters_3s.txt
+
+connectivity_files/connectivity_DEtO.txt
+xyz_files/DEtO_CG_XYZ/DEtO_XYZ_EM_
+energy_profiles/DEtO/DEtO_2D-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_MPr.txt
+xyz_files/MPr_CG_XYZ/MP_XYZ_EM_
+energy_profiles/MPr/MPr_2D-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_DMMe.txt
+xyz_files/DMMe_CG_113d_XYZ/DMMe_XYZ_EM_
+energy_profiles/DMMe/DMMe_2D-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt

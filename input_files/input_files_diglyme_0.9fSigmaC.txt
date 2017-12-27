@@ -1,0 +1,13 @@
+parameter_files/input_parameters_3s_0.9fSigmaC.txt
+
+connectivity_files/connectivity_diglyme.txt
+xyz_files/diglyme_CG_ABTTTT_fLJ0.5_SIGMA-0.346500-0.355500_XYZ/diglyme_ABTTTT_XYZ_EM_
+energy_profiles/diglyme/diglyme_ABTTTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_diglyme.txt
+xyz_files/diglyme_CG_TABTTT_fLJ0.5_SIGMA-0.346500-0.355500_XYZ/diglyme_TABTTT_XYZ_EM_
+energy_profiles/diglyme/diglyme_TABTTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_diglyme.txt
+xyz_files/diglyme_CG_TTABTT_fLJ0.5_SIGMA-0.346500-0.355500_XYZ/diglyme_TTABTT_XYZ_EM_
+energy_profiles/diglyme/diglyme_TTABTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt

@@ -1,9 +1,9 @@
 parameter_files/input_parameters_2s_OPLS-style.txt
 
 connectivity_files/connectivity_PODE2.txt
-xyz_files/PODE2_CG_ABTT_fLJ0.5_SIGMA-0.327500-0.337500_XYZ/PODE2_ABTT_XYZ_EM_
+xyz_files/PODE2_CG_ABTT_fLJ0.5_OPLS-style_XYZ/PODE2_ABTT_XYZ_EM_
 energy_profiles/PODE2/PODE2_ABTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
 
 connectivity_files/connectivity_PODE2.txt
-xyz_files/PODE2_CG_TABT_fLJ0.5_SIGMA-0.327500-0.337500_XYZ/PODE2_TABT_XYZ_EM_
+xyz_files/PODE2_CG_TABT_fLJ0.5_OPLS-style_XYZ/PODE2_TABT_XYZ_EM_
 energy_profiles/PODE2/PODE2_TABT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt

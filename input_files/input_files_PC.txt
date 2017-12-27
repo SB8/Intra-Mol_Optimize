@@ -1,5 +1,5 @@
-XYZ_FILES/PC_k400000_EM_1/PC_XYZ_EM_
-ENERGY_PROFILES/PC/PC_B3LYP-D3_SWEEP_ENVELOPE-COMBINED.txt
-CONNECTIVITY_FILES/connectivity_PC.txt
-0
-PHI_COORD_FILES/PC_PHI_PAIRS.txt
+parameter_files/input_parameters_read_filenames_PC.txt
+
+connectivity_files/connectivity_PC.txt
+xyz_files/PC_k400000_EM_1/PC_XYZ_EM_
+energy_profiles/PC/PC_B3LYP-D3_SWEEP_ENVELOPE-COMBINED.txt

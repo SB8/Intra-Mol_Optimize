@@ -1,0 +1,5 @@
+parameter_files/input_parameters_OPLS-style.txt
+
+connectivity_files/connectivity_DEC.txt
+xyz_files/DEC_k200000_2xMasiaImpr_OPLS-style_2_XYZ/DEC_XYZ_EM_
+energy_profiles/DEC/DEC_B3LYP-D3_6-311++G-2d,2p_energy_kJmol-1.txt

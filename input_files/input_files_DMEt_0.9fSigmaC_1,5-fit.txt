@@ -1,0 +1,5 @@
+parameter_files/input_parameters_0.9fSigmaC.txt
+
+connectivity_files/connectivity_DMEt_1,5-fit.txt
+xyz_files/DMEt_CG_ABT_fLJ0.5_SIGMA-0.346500_XYZ/DMEt_XYZ_EM_
+energy_profiles/DMEt/DMEt_ABT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt

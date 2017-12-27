@@ -1,0 +1,13 @@
+parameter_files/input_parameters_3s_0.9fSigmaC.txt
+
+connectivity_files/connectivity_PODE3.txt
+xyz_files/PODE3_CG_ABTTTT_fLJ0.5_SIGMA-0.308750-0.317750_XYZ/PODE3_ABTTTT_XYZ_EM_
+energy_profiles/PODE3/PODE3_ABTTTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_PODE3.txt
+xyz_files/PODE3_CG_TABTTT_fLJ0.5_SIGMA-0.308750-0.317750_XYZ/PODE3_TABTTT_XYZ_EM_
+energy_profiles/PODE3/PODE3_TABTTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_PODE3.txt
+xyz_files/PODE3_CG_TTABTT_fLJ0.5_SIGMA-0.308750-0.317750_XYZ/PODE3_TTABTT_XYZ_EM_
+energy_profiles/PODE3/PODE3_TTABTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt

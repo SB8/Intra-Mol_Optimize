@@ -1,0 +1,9 @@
+parameter_files/input_parameters_EC-PC.txt
+
+connectivity_files/connectivity_EC.txt
+xyz_files/EC_k400000_2xMasiaImpr_7_XYZ/EC_XYZ_EM_
+energy_profiles/EC/EC_B3LYP-D3_SWEEP_ENVELOPE-1.txt
+
+connectivity_files/connectivity_PC.txt
+xyz_files/PC_k400000_2xMasiaImpr_7_XYZ/PC_XYZ_EM_
+energy_profiles/PC/PC_B3LYP-D3_SWEEP_ENVELOPE-COMBINED.txt

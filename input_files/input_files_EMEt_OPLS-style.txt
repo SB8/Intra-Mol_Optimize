@@ -11,3 +11,4 @@ energy_profiles/EMEt/EMEt_TABT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
 connectivity_files/connectivity_EMEt.txt
 xyz_files/EMEt_CG_TTAB_K2E5_fLJ0.5_OPLS-style_XYZ/EMEt_TTAB_XYZ_EM_
 energy_profiles/EMEt/EMEt_TTAB-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+

@@ -1,0 +1,13 @@
+parameter_files/input_parameters_3s_k1000.txt
+
+connectivity_files/connectivity_EMEt_optimized_torsion_1,5-fit.txt
+xyz_files/EMEt_CG_ABTT_K2E5_0.32130-0.60666_0.33731-0.39902_0.36540-0.32074_XYZ/EMEt_ABTT_XYZ_EM_
+energy_profiles/EMEt/EMEt_ABTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_EMEt_optimized_torsion_1,5-fit.txt
+xyz_files/EMEt_CG_TABT_K2E5_0.32130-0.60666_0.33731-0.39902_0.36540-0.32074_XYZ/EMEt_TABT_XYZ_EM_
+energy_profiles/EMEt/EMEt_TABT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_EMEt_optimized_torsion_1,5-fit.txt
+xyz_files/EMEt_CG_TTAB_K2E5_0.32130-0.60666_0.33731-0.39902_0.36540-0.32074_XYZ/EMEt_TTAB_XYZ_EM_
+energy_profiles/EMEt/EMEt_TTAB-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt

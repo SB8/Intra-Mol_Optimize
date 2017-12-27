@@ -1,0 +1,11 @@
+gen_xyz_file_names 0
+num_phi_pairs 869 2976
+phi_dim 2
+num_phi_surfaces 2
+eps_restraint_k 1.0
+scale_1_4_qq 0.5
+scale_1_4_lj 0.0 
+write_energy_distribution 1
+phi_pair_files phi_coord_files/EC_PHI_PAIRS.txt phi_coord_files/PC_PHI_PAIRS.txt
+res_rb_to_zero 0
+rb_res_k 0.001

@@ -20,6 +20,8 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 
 	input_data_struct inputDefaults[] = {
 		{"gen_xyz_file_names", TYPE_INT, &(cons.genXyzFileNames), "1"},
+		{"phi_pair_files", TYPE_STRING, &(cons.phiPairFiles), "."},
+		{"num_phi_pairs", TYPE_STRING, &(cons.numPhiPairString), "0"},
 		{"phi_dim", TYPE_INT, &(cons.phiDim), "2"},
 		{"phi1_range", TYPE_FLOAT_3VEC, &(cons.phi1Range), "0.0 180.0 10.0"},
 		{"phi2_range", TYPE_FLOAT_3VEC, &(cons.phi2Range), "0.0 360.0 10.0"},
@@ -36,6 +38,8 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 		{"weight_edges_periodically", TYPE_INT, &(cons.weightPhiEdges), "1"},
 		{"sigma_1_4_factor", TYPE_FLOAT, &(cons.sigma14factor), "1.0"},
 		{"sigma_1_4_mod_cutoff", TYPE_FLOAT, &(cons.sigma14factorCutoff), "0.3"},
+		{"res_rb_to_zero", TYPE_INT, &(cons.resToZero), "0"},
+		{"rb_res_k", TYPE_FLOAT, &(cons.rbK), "0.0"},
 		{"use_adaptive_nelder_mead", TYPE_INT, &(cons.useAdaptiveNelderMead), "1"},
 		{"write_energy_distribution", TYPE_INT, &(cons.writeEnergyDist), "0"}
 	};
@@ -65,13 +69,15 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 		std::cin.ignore();
 	}
 
-
 	cons.pi = acosl(-1.0L);
-
 	cons.xyzAngstroms = true;
 
 	if (cons.sigma14factor != 1.0) {
 		cout << "Warning: Sigma-1,4 factor = " << cons.sigma14factor << ", press enter to continue.";
+		std::cin.ignore();
+	}
+	if (cons.rbK > 0.0) {
+		cout << "Warning: Restraints being applied to dihedral coefficients, k = " << cons.rbK << ", press enter to continue.";
 		std::cin.ignore();
 	}
 
@@ -81,10 +87,6 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 	//cons.kTBoltzIntegral = 3.3258; // 400K
 	//cons.kTBoltzIntegral = 9.977292; // 1200K
 	cons.kBoltzRes = 0.0;
-
-	// Restraining params to default values
-	cons.resToZero = 0;
-	cons.rbK = 0.0;
 
 	//
 	int numPhi1 = 0, numPhi2 = 0, numPhi3 = 0;
@@ -104,14 +106,13 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 	}
 	else if (!cons.genXyzFileNames) {
 	}
-	cout << "Num configs per surface = " << cons.numConfigs << endl;
-
+	
 	vecs.simpsonCoeffsPhi1.resize(numPhi1);
 	vecs.simpsonCoeffsPhi2.resize(numPhi2);
 	std::fill(vecs.simpsonCoeffsPhi1.begin(),vecs.simpsonCoeffsPhi1.begin()+numPhi1,1);
 	std::fill(vecs.simpsonCoeffsPhi2.begin(),vecs.simpsonCoeffsPhi2.begin()+numPhi2,1);
 
-	// Partitioning of potential energy surface into conformers
+	// Partitioning of potential energy surface into conformers for DME
 	if (cons.inputFileString == "input_files_DME.txt") {
 
 		vecs.phi1partition.push_back(0.0);
@@ -180,40 +181,35 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 		}
 	}
 
-	// Molecule specific parameters (overwrite numConfigs if needed)
-	if (cons.inputFileString == "input_files_EC.txt") {
-		cons.resToZero = 1;
-		cons.numConfigs = 869;
-		cons.rbK = 1.0E-6;
-	}
-	if (cons.inputFileString == "input_files_PC.txt") {
-		cons.resToZero = 1;
-		cons.numConfigs = 2976;
-		cons.rbK = 1.0E-6;
-	}
-
 	// Connectivity data sizes
 	cons.atomDataSize = 4;
 	cons.bondDataSize = 4;
 	cons.angleDataSize = 5;
 	cons.dihedralDataSize = 11;
-	cons.improperDataSize = 7;
+	cons.improperDataSize = 6;
 	cons.pairDataSize = 5;
 
-	if (cons.genXyzFileNames) {
-		vecs.connectFileList.resize(cons.numPhiSurfaces);
-		vecs.xyzFileList.resize(cons.numPhiSurfaces);
-		vecs.energyFileList.resize(cons.numPhiSurfaces);
-	}
-	else {
-		assert(cons.numPhiSurfaces == 1);
-		vecs.connectFileList.resize(1);
-		vecs.xyzFileList.resize(1);
-		vecs.energyFileList.resize(1);
+	vecs.connectFileList.resize(cons.numPhiSurfaces);
+	vecs.xyzFileList.resize(cons.numPhiSurfaces);
+	vecs.energyFileList.resize(cons.numPhiSurfaces);
+	vecs.phiPairFileList.resize(cons.numPhiSurfaces);
+	vecs.numPhiPairs.resize(cons.numPhiSurfaces);
+	
+	// Split line containing phi pair file names into multiple strings
+	float flpTemp;
+	if (cons.genXyzFileNames == 0) {
+		std::stringstream ssPhi(cons.phiPairFiles);	
+		std::stringstream ssNum(cons.numPhiPairString);	
+		for (int i_s=0; i_s<cons.numPhiSurfaces; i_s++) {
+			ssPhi >> vecs.phiPairFileList[i_s];
+			ssNum >> flpTemp;
+			vecs.numPhiPairs[i_s] = round(flpTemp);
+		}
 	}
 
 	initialParams.surfIndexMapping.resize(cons.numPhiSurfaces,-1);
 	initialParams.dihedralIndexMapping.resize(512,-1); // Size = max number of dihedrals supported
+	initialParams.dihedralMappingIndex.resize(512,-1);
 	initialParams.pairIndexMapping.resize(512,-1);
 
 	// Resize outer (i_s) loop of vector<vector> types
@@ -276,7 +272,7 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 	cons.sigmaStep = 0.0002;
 	cons.epsilonStep = 0.001;
 
-	cons.sigmaGradFactor = 1.0;
+	cons.sigmaGradFactor = 0.05;
 
 	return 0;
 }
@@ -361,13 +357,13 @@ int process_input_line(string fLine, input_data_struct* inputDefaults, int input
 				memcpy( (inputDefaults+l)->varPtr, value3VecFloat, sizeof(double)*3);
 			}
 			else if ((inputDefaults+l)->dataType == TYPE_STRING) {
-				char valueString[WORD_STRING_SIZE];
-				sscanf(fLine.c_str(), "%*s %s", valueString);
-				memcpy( (inputDefaults+l)->varPtr, valueString, sizeof(valueString) );
+				char valueString[65536];
+				sscanf(fLine.c_str(), "%*s %[^\n]", valueString);
+				*((string*)(inputDefaults+l)->varPtr) = string(valueString);
+				cout << "String input line: " << valueString << endl;
 			}
 		}
 	}
-
 	return 0;
 }
 
@@ -668,10 +664,10 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, fitting_param_s
 	double currentF;
 	double previousF = error_from_trial_point(cons, vecs, initialParams, currentParams, 0);
 
-	double alpha = 0.001, tau = 0.5; // Starting step size and reduction factor
+	double alpha = 1.0, tau = 0.5; // Starting step size and reduction factor
 	double currentBestAlpha = alpha;
 
-	const int nMax = 35; // Maximum number of iterations in line search
+	const int nMax = 36; // Maximum number of iterations in line search
 	double lineSearchF[nMax];
 	double currentBestF = previousF;
 
@@ -704,7 +700,7 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, fitting_param_s
 
 		if (toPrint) {
 			cout << "\nGradient:\n";
-			print_params_console(cons, gradVectorNew);
+			print_grad_console(cons, gradVectorNew);
 		}
 
 		// Calculate dot-products needed for beta and theta coefficients
@@ -730,8 +726,8 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, fitting_param_s
 
 		// Perform line search in conjugate direction
 		int n=0;
-		alpha = 0.001;
-		double deltaZ = 0.0001;
+		alpha = 1.0;
+		double deltaZ = 0.001;
 		double deltaCG = -1.0; // Set negative for start of while loop
 		while ( (n<=nMax) && (deltaCG < 0.0) ) {
 			// Get updated params from x_i+1 = x_i - alpha*d_i+1
@@ -752,7 +748,7 @@ int conjugate_gradient(constant_struct cons, vector_struct vecs, fitting_param_s
 		currentParams = tempParams;
 
 		if (toPrint) {
-			cout << "Updating parameters, F = " << currentF << endl;
+			cout << "Updating parameters at iteration " << iG << ", F = " << currentF << endl;
 			print_params_console(cons, currentParams);
 		}
 	}
@@ -813,10 +809,20 @@ int connectivity_read(constant_struct &cons, vector_struct &vecs, int i_s)
 	cout << vecs.molSize[i_s].pairs << " special pairs found.\n";
 
 	// Resize inner loop of vector<vector> types for this molecule and energy surface
-	vecs.xyzData[i_s].resize(cons.numConfigs*vecs.molSize[i_s].atoms*3);
-	vecs.dftData[i_s].resize(cons.numConfigs);
-	vecs.energyWeighting[i_s].resize(cons.numConfigs);
-	vecs.uConst[i_s].resize(cons.numConfigs);
+	if (!cons.genXyzFileNames) {
+		vecs.xyzData[i_s].resize(vecs.numPhiPairs[i_s]*vecs.molSize[i_s].atoms*3);
+		vecs.dftData[i_s].resize(vecs.numPhiPairs[i_s]);
+		vecs.energyWeighting[i_s].resize(vecs.numPhiPairs[i_s]);
+		vecs.uConst[i_s].resize(vecs.numPhiPairs[i_s]);
+		vecs.energyDelta[i_s].resize(vecs.numPhiPairs[i_s]);
+	}
+	else {
+		vecs.xyzData[i_s].resize(cons.numConfigs*vecs.molSize[i_s].atoms*3);
+		vecs.dftData[i_s].resize(cons.numConfigs);
+		vecs.energyWeighting[i_s].resize(cons.numConfigs);
+		vecs.uConst[i_s].resize(cons.numConfigs);
+		vecs.energyDelta[i_s].resize(cons.numConfigs);
+	}
 
 	vecs.atomData[i_s].resize(vecs.molSize[i_s].atoms*cons.atomDataSize);
 	vecs.bondData[i_s].resize(vecs.molSize[i_s].bonds*cons.bondDataSize);
@@ -830,7 +836,6 @@ int connectivity_read(constant_struct &cons, vector_struct &vecs, int i_s)
 		vecs.pairData[i_s].resize(vecs.molSize[i_s].pairs*cons.pairDataSize);
 	}
 
-	vecs.energyDelta[i_s].resize(cons.numConfigs);
 	vecs.bondSepMat[i_s].resize(vecs.molSize[i_s].atoms*vecs.molSize[i_s].atoms);
 	vecs.rijMatrix[i_s].resize(vecs.molSize[i_s].atoms*vecs.molSize[i_s].atoms);
 	vecs.sigmaMatrix[i_s].resize(vecs.molSize[i_s].atoms*vecs.molSize[i_s].atoms);
@@ -1221,19 +1226,19 @@ int xyz_files_read(constant_struct &cons, vector_struct &vecs, int i_s)
 			}
 		}
 	}
-	else {
+	else { // Read from file
 		assert(cons.phiDim == 2);
 
 		ifstream phiPairStream, xyzStream;
-		cout << "Reading phi pairs from " << vecs.xyzFileList[0] << endl;
+		cout << "Reading " << vecs.numPhiPairs[i_s] << " phi pairs from " << vecs.phiPairFileList[i_s] << endl;
 
-		phiPairStream.open(vecs.xyzFileList[0].c_str());
+		phiPairStream.open(vecs.phiPairFileList[i_s].c_str());
 		if( !phiPairStream.is_open() ) {
 			cout << "Error, phi pair file cannot be opened!" << endl;
 			return 1;
 		}
 
-		for (int i_f=0; i_f<cons.numConfigs; i_f++) {
+		for (int i_f=0; i_f<vecs.numPhiPairs[i_s]; i_f++) {
 			// Set weighting
 			vecs.energyWeighting[i_s][i_f] = 1.0;
 
@@ -1250,7 +1255,7 @@ int xyz_files_read(constant_struct &cons, vector_struct &vecs, int i_s)
 
 			// Generate xyz filename
 			// This method assumes the files end with "-000.xyz"
-			string fileName = vecs.xyzFileList[0] + phi1Str + "_" + phi2Str + "-000" + ".xyz";
+			string fileName = vecs.xyzFileList[i_s] + phi1Str + "_" + phi2Str + "-000" + ".xyz";
 
 			//cout << "Opening xyz file: " << fileName << endl;
 
@@ -1276,6 +1281,10 @@ int energy_read(constant_struct &cons, vector_struct &vecs, int i_s)
 {
 	ifstream energyStream;
 	energyStream.open(vecs.energyFileList[i_s]);
+	
+	if (!cons.genXyzFileNames) {
+		cons.numConfigs = vecs.numPhiPairs[i_s];
+	}
 
 	if(!energyStream.is_open()) {
 		cout << "ERROR: Energy file was not opened!\n";
@@ -1288,14 +1297,12 @@ int energy_read(constant_struct &cons, vector_struct &vecs, int i_s)
 	}
 	
 	double minU = *std::min_element(vecs.dftData[i_s].begin(), vecs.dftData[i_s].end());
-	cout << ">> MIN U = " << minU << endl;
 	
 	for (int i_u=0; i_u<cons.numConfigs; i_u++) {
 		energyStream >> vecs.dftData[i_s][i_u];
 		// Apply Boltzmann weighting
 		vecs.energyWeighting[i_s][i_u] *= exp(-(vecs.dftData[i_s][i_u]-minU)/cons.KT);
-		//cout << "Energy, weighting: " << i_u << " " << vecs.dftData[i_s][i_u] << ", ";
-		//cout << vecs.energyWeighting[i_s][i_u] << endl;
+		//cout << "i, Energy: " << i_u << " " << vecs.dftData[i_s][i_u] << ", ";
 	}
 
 	/* Integrate DFT energy over conformers
@@ -1352,6 +1359,9 @@ int energy_read(constant_struct &cons, vector_struct &vecs, int i_s)
 
 int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_param_struct &initialParams, int i_s)
 {
+	if (!cons.genXyzFileNames) {
+		cons.numConfigs = vecs.numPhiPairs[i_s];
+	}
 	cout << "Processing constant energy terms in " << cons.numConfigs;
 	cout << " geometries of surface " << i_s << ".\n\n";
 
@@ -1442,6 +1452,7 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 			// If new type (mapping array should be initialized to -1)
 			if (initialParams.dihedralIndexMapping[dType] < 0) {
 				// Index dType maps to this dihedral number in fitting
+				initialParams.dihedralMappingIndex[totalUniqueDihedrals] = dType;
 				initialParams.dihedralIndexMapping[dType] = totalUniqueDihedrals++;
 				initialParams.rbTypeCount.push_back(1); // First of this type
 				cout << "Type " << dType << " is new dihedral type " << totalUniqueDihedrals << endl;
@@ -1463,6 +1474,7 @@ int constant_energy_process(constant_struct cons, vector_struct &vecs, fitting_p
 					// Take average of this and all the others of this type
 					initialParams.rbCoeff[offSet + (cosExp-1)] =
 						(newCoeff/count) + (count-1)*initialParams.rbCoeff[offSet + (cosExp-1)]/count;
+					
 				}
 			}
 		}
@@ -1767,7 +1779,6 @@ double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting
 		energyMD.open("energyMD.txt");
 		energyDist.open("energyDist.txt");
 	}
-	//print_params_console(cons, trialParams);
 
 	// Total sum of all contributions to objective function (F) per surface
 	vector<double> sumF(cons.numPhiSurfaces,0.0);
@@ -1776,6 +1787,9 @@ double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting
 	// Loop over energy surfaces
 	for (int i_s=0; i_s<cons.numPhiSurfaces; i_s++) {
 		//
+		if (!cons.genXyzFileNames) {
+			cons.numConfigs = vecs.numPhiPairs[i_s];
+		}
 		energyTotal[i_s].resize(cons.numConfigs,0.0);
 		energyDihedral[i_s].resize(cons.numConfigs,0.0);
 		energyPair[i_s].resize(cons.numConfigs,0.0);
@@ -1804,11 +1818,13 @@ double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting
 					double coeff = trialParams.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)];
 					// Dihedral coeff restraint term added directly to sumF
 					if (cons.resToZero == 1) {
-						sumF[i_s] += cons.rbK*coeff*coeff;
+						sumF[i_s] += cons.rbK*coeff*coeff*double(cons.numConfigs)/double(trialParams.rbTypeCount[rbID]); 
 					}
 					else {
-						double coeffDelta = coeff-initialParams.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)];
-						sumF[i_s] += cons.rbK*coeffDelta*coeffDelta*cons.numConfigs;
+						double rbDelta = coeff-initialParams.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)];
+						sumF[i_s] += cons.rbK*rbDelta*rbDelta*double(cons.numConfigs)/double(trialParams.rbTypeCount[rbID]);
+						//cout << "k,A,A0 " << cons.rbK << "," << coeff << "," << 
+						  //initialParams.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)] << endl;
 					}
 				}
 			}
@@ -1855,8 +1871,6 @@ double error_from_trial_point(constant_struct cons, vector_struct &vecs, fitting
 			// F += weighting*(delta*U)^2
 			vecs.energyDelta[i_s][i_f] = energyTotal[i_s][i_f]-vecs.dftData[i_s][i_f];
 			sumF[i_s] += vecs.energyDelta[i_s][i_f]*vecs.energyDelta[i_s][i_f]*vecs.energyWeighting[i_s][i_f];
-
-			//cout << "Delta  " << energyTotal[i_s][i_f] - vecs.dftData[i_s][i_f] << endl;
 
 			// Write to file
 			if (toWrite == 1) {
@@ -1918,6 +1932,7 @@ int compute_gradient_F(constant_struct cons, vector_struct vecs, fitting_param_s
 fitting_param_struct currentParams, fitting_param_struct &grad)
 {
 	grad.zero_params();
+	fitting_param_struct gradTemp = grad;
 
 	// Run error_from_trial_point to fill vecs.energyDelta (U_DFT - U_MD)
 	error_from_trial_point(cons, vecs, initialParams, currentParams, 0);
@@ -1925,6 +1940,11 @@ fitting_param_struct currentParams, fitting_param_struct &grad)
 	// Loop over energy surfaces
 	for (int i_s=0; i_s<cons.numPhiSurfaces; i_s++) {
 		//
+		gradTemp.zero_params(); 
+		//
+		if (!cons.genXyzFileNames) {
+			cons.numConfigs = vecs.numPhiPairs[i_s];
+		}
 		int i_psiPow = 0, i_pairSep = 0;
 
 		// Loop over all dihedrals
@@ -1940,20 +1960,21 @@ fitting_param_struct currentParams, fitting_param_struct &grad)
 					// Weighted delta
 					double wd = vecs.energyWeighting[i_s][i_f]*vecs.energyDelta[i_s][i_f];
 					for (int cosExp=1; cosExp < cons.nRBfit; cosExp++) {
-						grad.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)] += 2*wd*vecs.cosPsiData[i_s][i_psiPow++];
+						gradTemp.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)] += 2*wd*vecs.cosPsiData[i_s][i_psiPow++];
 					}
 				}
 				// Dihedral coeff restraint term
 				for (int cosExp=1; cosExp < cons.nRBfit; cosExp++) {
 					//
+					double coeff = currentParams.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)];
+					
 					if (cons.resToZero == 1) {
-						double rbDelta = currentParams.rbCoeff[rbID];
-						grad.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)] +=
-							2*cons.rbK*rbDelta*double(cons.numConfigs)/double(currentParams.rbTypeCount[rbID]);
+						gradTemp.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)] +=
+							2*cons.rbK*coeff*double(cons.numConfigs)/double(currentParams.rbTypeCount[rbID]);
 					}
 					else {
-						double rbDelta = currentParams.rbCoeff[rbID] - initialParams.rbCoeff[rbID];
-						grad.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)] +=
+						double rbDelta = coeff - initialParams.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)];
+						gradTemp.rbCoeff[rbID*(cons.nRBfit-1)+(cosExp-1)] +=
 							2*cons.rbK*rbDelta*double(cons.numConfigs)/double(currentParams.rbTypeCount[rbID]);
 					}
 				}
@@ -1980,19 +2001,20 @@ fitting_param_struct currentParams, fitting_param_struct &grad)
 
 					// Weighted delta
 					double wd = vecs.energyWeighting[i_s][i_f]*vecs.energyDelta[i_s][i_f];
-					grad.ljSigma[ljID] += 2*wd*4.0*epsilon*(sigR6*sigR6*12 - sigR6*6)/sigma;
-					grad.ljEps[ljID] += 2*wd*4.0*(sigR6*sigR6-sigR6);
+					gradTemp.ljSigma[ljID] += 2*wd*4.0*epsilon*(sigR6*sigR6*12 - sigR6*6)/sigma;
+					gradTemp.ljEps[ljID] += 2*wd*4.0*(sigR6*sigR6-sigR6);
 				}
 				// LJ restraint term added directly to F
 				double epsDelta = currentParams.ljEps[ljID]-initialParams.ljEps[ljID];
-				grad.ljEps[ljID] += 2*cons.epsK*epsDelta*double(cons.numConfigs)/double(currentParams.ljTypeCount[ljID]);
+				gradTemp.ljEps[ljID] += 2*cons.epsK*epsDelta*double(cons.numConfigs)/double(currentParams.ljTypeCount[ljID]);
 			}
 		}
 
 		int molID = currentParams.surfIndexMapping[i_s];
 		for (int i_f=0; i_f<cons.numConfigs; i_f++) {
-			grad.uShift[molID] += 2*vecs.energyWeighting[i_s][i_f]*vecs.energyDelta[i_s][i_f];
+			gradTemp.uShift[molID] += 2*vecs.energyWeighting[i_s][i_f]*vecs.energyDelta[i_s][i_f];
 		}
+		param_linear_combine(grad, grad, gradTemp, 1.0, 1.0/double(cons.numConfigs));
 	} // i_s loop
 
 	// Apply scaling factor for sigma gradient (which has different units)
@@ -2001,11 +2023,6 @@ fitting_param_struct currentParams, fitting_param_struct &grad)
 	}
 
 	param_linear_combine(grad, grad, grad, 1.0/double(cons.numPhiSurfaces), 0.0);
-
-	//cout << "Current:\n";
-	//print_params_console(cons, currentParams);
-	//cout << "Grad:\n";
-	//print_params_console(cons, grad);
 
 	return 0;
 }
@@ -2131,13 +2148,19 @@ int compute_boltzmann_integrals(constant_struct cons, vector_struct vecs, vector
 
 int print_params_console(constant_struct &cons, fitting_param_struct &printParams)
 {
-	const int rbPerRow = 3;
+	const int rbPerRow = 1;
 
 	for (int i=0; i < printParams.uShift.size(); i++) {
 		printf("%7.3f ", printParams.uShift[i]);
 	}
 	for (int j=0; j < printParams.rbCoeff.size(); j++) {
+		
 		if (j%((cons.nRBfit-1)*rbPerRow)==0) cout << endl;
+		
+		if (j%(cons.nRBfit-1)==0) {
+			//cout << printParams.dihedralMappingIndex[(j/(cons.nRBfit-1))];
+		} 
+		//printf("%s %7.3f ", ", ", printParams.rbCoeff[j]);
 		printf("%7.3f ", printParams.rbCoeff[j]);
 
 	}
@@ -2150,9 +2173,36 @@ int print_params_console(constant_struct &cons, fitting_param_struct &printParam
 	return 0;
 }
 
+int print_grad_console(constant_struct &cons, fitting_param_struct &printParams)
+{
+	const int rbPerRow = 1;
+
+	for (int i=0; i < printParams.uShift.size(); i++) {
+		printf("%7.3E ", printParams.uShift[i]);
+	}
+	for (int j=0; j < printParams.rbCoeff.size(); j++) {
+		
+		if (j%((cons.nRBfit-1)*rbPerRow)==0) cout << endl;
+		
+		if (j%(cons.nRBfit-1)==0) {
+			cout << printParams.dihedralMappingIndex[(j/(cons.nRBfit-1))];
+		} 
+		printf("%s %7.3E ", ", ", printParams.rbCoeff[j]);
+	}
+	cout << endl;
+	for (int k=0; k < printParams.ljEps.size(); k++) {
+		printf("%8.5E ", printParams.ljSigma[k]);
+		printf("%8.5E ", printParams.ljEps[k]);
+	}
+	cout << endl;
+	return 0;
+}
+
 int print_simplex_console(constant_struct &cons, simplex_struct &printSim)
 {
-	for (int row=0; row<printSim.plex.size(); row++) {
+	//int range = printSim.plex.size();
+	int range = 1;
+	for (int row=0; row<range; row++) {
 		print_params_console(cons, printSim.plex[row]);
 	}
 	return 0;

@@ -1,4 +1,5 @@
-xyz_files/DEC_EM_k200000_IMPR-MASIA_XYZ/DEC_EM_
-ENERGY_PROFILES/DEC/DEC_B3LYP-D3_6-311++G-2d,2p_energy_kJmol-1.txt
-connectivity_files/connectivity_DEC_no-pair-fit_test.txt
-1
+parameter_files/input_parameters.txt
+
+connectivity_files/connectivity_DEC.txt
+xyz_files/DEC_k200000_2xMasiaImpr_2_XYZ/DEC_XYZ_EM_
+energy_profiles/DEC/DEC_B3LYP-D3_6-311++G-2d,2p_energy_kJmol-1.txt

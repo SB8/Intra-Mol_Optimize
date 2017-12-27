@@ -1,0 +1,9 @@
+parameter_files/input_parameters_2s.txt
+
+connectivity_files/connectivity_PODE2_1,5-fit-only-CR.txt
+xyz_files/PODE2_CG_ABTT_0.3327-0.5857_XYZ/PODE2_ABTT_XYZ_EM_
+energy_profiles/PODE2/PODE2_ABTT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
+
+connectivity_files/connectivity_PODE2_1,5-fit-only-CR.txt
+xyz_files/PODE2_CG_TABT_0.3327-0.5857_XYZ/PODE2_TABT_XYZ_EM_
+energy_profiles/PODE2/PODE2_TABT-SWEEP_B3LYP-D3_6-311++G2d2p_10deg_kJ-mol-1.txt
