@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h> 
 #include <time.h> 
-#include <string>
+#include <string.h>
 #include <sstream>
 #include <iostream>
 #include <fstream>

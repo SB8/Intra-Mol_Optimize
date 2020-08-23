@@ -48,7 +48,7 @@ int read_input_params(constant_struct &cons, vector_struct &vecs, fitting_param_
 
 	// Set defaults
 	for (int p=0; p<inputDefaultSize; p++) {
-		char defaultLine[WORD_STRING_SIZE] = {0};
+		char defaultLine[WORD_STRING_SIZE*2 + 1] = {0};
 		sprintf(defaultLine, "%s %s", inputDefaults[p].keyword, inputDefaults[p].defString);
 		process_input_line(&defaultLine[0], inputDefaults, inputDefaultSize, 0);
 	}
